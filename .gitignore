@@ -62,3 +62,7 @@ autoconf/autom4te.cache
 # clangd index. (".clangd" is a config file now, thus trailing slash)
 .clangd/
 .cache
+
+# personal files
+todo*
+repomix*

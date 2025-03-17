@@ -36,9 +36,10 @@ public:
       return;
     }
     if (PrimNode.getOp() == tok::minus) {
-      if (PrimNode.getE1() and !PrimNode.getE2())
+      if (PrimNode.getE1() and !PrimNode.getE2()) {
         PrimNode.getE1()->accept(*this);
-      return;
+        return;
+      }
     }
     if (PrimNode.getOp() == tok::plus || PrimNode.getOp() == tok::minus) {
       PrimNode.getE1()->accept(*this);

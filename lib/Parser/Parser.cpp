@@ -51,6 +51,7 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
 
     if (Tok.is(TokenKind::r_paren)) {
+      advance();
       return new Prim(TokenKind::minus, E1);
     }
 
