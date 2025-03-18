@@ -5,6 +5,7 @@
 namespace {
 class ProgramCheck : public ASTVisitor {
   bool HasError;
+  llvm::StringSet<> Variables; // Track variables in scope
 
 public:
   ProgramCheck() : HasError(false) {}
@@ -20,11 +21,19 @@ public:
 
   virtual void visit(Expr &Node) override {
     if (llvm::isa<Prim>(Node)) {
-      Node.accept(*this);
+      llvm::cast<Prim>(Node).accept(*this);
       return;
     }
     if (llvm::isa<Int>(Node)) {
-      Node.accept(*this);
+      llvm::cast<Int>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Var>(Node)) {
+      llvm::cast<Var>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Let>(Node)) {
+      llvm::cast<Let>(Node).accept(*this);
       return;
     }
     HasError = true;
@@ -36,16 +45,61 @@ public:
       return;
     }
     if (PrimNode.getOp() == tok::minus) {
-      if (PrimNode.getE1() and !PrimNode.getE2()) {
+      if (PrimNode.getE1() && !PrimNode.getE2()) {
         PrimNode.getE1()->accept(*this);
         return;
       }
     }
     if (PrimNode.getOp() == tok::plus || PrimNode.getOp() == tok::minus) {
-      PrimNode.getE1()->accept(*this);
-      PrimNode.getE2()->accept(*this);
+      if (PrimNode.getE1())
+        PrimNode.getE1()->accept(*this);
+      else
+        HasError = true;
+        
+      if (PrimNode.getE2())
+        PrimNode.getE2()->accept(*this);
+      else
+        HasError = true;
       return;
     }
+    HasError = true; // Unknown primitive operation
+  }
+
+  virtual void visit(Var &Node) override {
+    // Check if the variable is in scope
+    if (!Variables.count(Node.getName())) {
+      llvm::errs() << "Error: Variable '" << Node.getName() << "' is not defined\n";
+      HasError = true;
+    }
+    return;
+  }
+
+  virtual void visit(Let &Node) override {
+    // First, check that the binding expression is valid
+    if (Node.getBinding())
+      Node.getBinding()->accept(*this);
+    else {
+      HasError = true;
+      return;
+    }
+
+    // Save the current variable state
+    bool PreviouslyDefined = Variables.count(Node.getVar()) > 0;
+    
+    // Add the new variable to scope
+    Variables.insert(Node.getVar());
+    
+    // Check the body expression
+    if (Node.getBody())
+      Node.getBody()->accept(*this);
+    else
+      HasError = true;
+    
+    // Remove the variable from scope if it wasn't previously defined
+    if (!PreviouslyDefined)
+      Variables.erase(Node.getVar());
+    
+    return;
   }
 
   virtual void visit(Int &Node) override { return; }

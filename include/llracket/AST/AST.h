@@ -12,6 +12,8 @@ typedef llvm::StringMap<std::any> ProgramInfo;
 class Expr;
 class Prim;
 class Int;
+class Var;
+class Let;
 
 class ASTVisitor {
 public:
@@ -19,6 +21,8 @@ public:
   virtual void visit(Program &) {};
   virtual void visit(Expr &) {};
   virtual void visit(Prim &) {};
+  virtual void visit(Var &) = 0;
+  virtual void visit(Let &) = 0;
   virtual void visit(Int &) = 0;
 };
 
@@ -44,7 +48,7 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet };
 
 private:
   const ExprKind Kind;
@@ -84,7 +88,34 @@ public:
   StringRef getValue() const { return Value; };
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
-  static bool classof(const Expr *E) { return true; }
+  static bool classof(const Expr *E) { return E->getKind() == ExprInt;}
+};
+
+class Var : public Expr { 
+  StringRef Name;
+public:
+  Var(StringRef Name) : Expr(ExprVar), Name(Name) {}
+  StringRef getName() const { return Name; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprVar; }
+};
+
+class Let : public Expr {
+  StringRef VarName;
+  Expr *Binding;
+  Expr *Body;
+
+public:
+  Let(StringRef VarName, Expr *Binding, Expr *Body)
+      : Expr(ExprLet), VarName(VarName), Binding(Binding), Body(Body) {}
+
+  StringRef getVar() const { return VarName; }
+  Expr *getBinding() const { return Binding; }
+  Expr *getBody() const { return Body; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprLet; }
 };
 
 #endif

@@ -45,6 +45,7 @@ class Parser {
   }
 
   Expr *parseExpr();
+  Let *parseLetExpr();
 
 public:
   Parser(Lexer &Lex, DiagnosticsEngine &Diags) : Lex(Lex), Diags(Diags) {

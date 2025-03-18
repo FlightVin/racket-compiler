@@ -47,7 +47,11 @@ void Lexer::next(Token &token) {
       formToken(token, End, TokenKind::read);
       return;
     }
-    formToken(token, End, TokenKind::unknown);
+    if (Text == "let") {
+      formToken(token, End, TokenKind::kw_let);
+      return;
+    }
+    formToken(token, End, TokenKind::identifier);
     return;
   }
 
@@ -61,6 +65,8 @@ void Lexer::next(Token &token) {
     CASE('-', minus);
     CASE('(', l_paren);
     CASE(')', r_paren);
+    CASE('[', l_square);
+    CASE(']', r_square);
 #undef CASE
 
   default:

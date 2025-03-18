@@ -42,9 +42,20 @@ int main(int argc_, const char **argv_) {
 int LLRacket::exec() {
   // Parse the program to AST
   Lexer Lex(*SrcMgr, Diags);
+
+  // Token Tok;
+  // Lex.next(Tok);
+  // while (Tok.getKind() != tok::eof) {
+  //     llvm::outs() << "Token Kind: " << tok::getTokenName(Tok.getKind()) << ", Text: '" << Tok.getText() << "'\n";
+  //     Lex.next(Tok);
+  // }
+  // return 0; // Exit early after token printing
+
+
   Parser P(Lex, Diags);
   AST *Tree = P.parse();
   if (!Tree || Diags.numErrors()) {
+    llvm::errs()<<Diags.numErrors()<<"\n";
     llvm::errs() << "Syntax error\n";
     return 1;
   }
