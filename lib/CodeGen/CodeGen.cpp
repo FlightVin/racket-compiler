@@ -113,38 +113,47 @@ public:
     }
   };
 
+  Value* visitLetExpr(Let &Node, llvm::BasicBlock* insertBlock); // NEW method, separated out let logic
+
   virtual void visit(Let &Node) override {
-    // Evaluate the binding expression
+      V = visitLetExpr(Node, Builder.GetInsertBlock());
+  };
+};
+
+Value* ToIRVisitor::visitLetExpr(Let &Node, llvm::BasicBlock* insertBlock) {
+    // 1. Generate code for binding expression into a temporary variable (alloca)
     Node.getBinding()->accept(*this);
     Value *BindingVal = V;
-    
-    // Create an alloca for the variable
+
+    Builder.SetInsertPoint(insertBlock); // Use passed in insertBlock
+
     AllocaInst *Alloca = Builder.CreateAlloca(Int32Ty, nullptr, Node.getVar());
-    
-    // Store the binding value in the alloca
     Builder.CreateStore(BindingVal, Alloca);
-    
-    // Save the old value of the variable if it exists
+
     AllocaInst *OldValue = nullptr;
     auto it = nameMap.find(Node.getVar());
     if (it != nameMap.end()) {
       OldValue = it->second;
     }
-    
-    // Add the new binding to the name map
     nameMap[Node.getVar()] = Alloca;
-    
-    // Evaluate the body expression
+
+    // 2. Generate code for the body expression (now, call accept on Body and return its result)
+    Value* BodyValue; // Variable to store body's result
     Node.getBody()->accept(*this);
-    
-    // Restore the old binding if it existed
+    BodyValue = V; // Body expression's result is now in V
+
+
     if (OldValue) {
       nameMap[Node.getVar()] = OldValue;
     } else {
       nameMap.erase(Node.getVar());
     }
-  };
-};
+
+    // 3. Return the pointer to the temporary variable (alloca) - or in this case, return the BodyValue directly
+    return BodyValue; // Return result of body expression
+}
+
+
 } // namespace
 
 void CodeGen::compile(AST *Tree) {
