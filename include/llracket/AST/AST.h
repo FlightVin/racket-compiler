@@ -14,6 +14,8 @@ class Prim;
 class Int;
 class Var;
 class Let;
+class Bool;
+class If;
 
 class ASTVisitor {
 public:
@@ -24,6 +26,8 @@ public:
   virtual void visit(Var &) = 0;
   virtual void visit(Let &) = 0;
   virtual void visit(Int &) = 0;
+  virtual void visit(Bool &) = 0;
+  virtual void visit(If &) = 0;
 };
 
 class AST {
@@ -48,7 +52,7 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf };
 
 private:
   const ExprKind Kind;
@@ -116,6 +120,34 @@ public:
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprLet; }
+};
+
+class Bool : public Expr {
+  bool Value;
+
+public:
+  Bool(bool Value) : Expr(ExprBool), Value(Value) {};
+  bool getValue() const { return Value; };
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprBool; }
+};
+
+class If : public Expr {
+  Expr *Condition;
+  Expr *ThenExpr;
+  Expr *ElseExpr;
+
+public:
+  If(Expr *Condition, Expr *ThenExpr, Expr *ElseExpr)
+      : Expr(ExprIf), Condition(Condition), ThenExpr(ThenExpr), ElseExpr(ElseExpr) {}
+
+  Expr *getCondition() const { return Condition; }
+  Expr *getThenExpr() const { return ThenExpr; }
+  Expr *getElseExpr() const { return ElseExpr; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprIf; }
 };
 
 #endif

@@ -16,8 +16,8 @@ LLVM_READNONE inline static bool isAlphanumeric(char c) {
   return isLetter(c) || isDigit(c);
 }
 
-LLVM_READNONE inline static bool isAlphanumeric_(char c) {
-  return isAlphanumeric(c) || c == '_';
+LLVM_READNONE inline static bool isIdentifierChar(char c) {
+  return isAlphanumeric(c) || c == '_' || c == '-' || c == '?' || c == '!';
 }
 } // namespace charinfo
 
@@ -37,12 +37,27 @@ void Lexer::next(Token &token) {
     formToken(token, End, TokenKind::integer_literal);
     return;
   }
-  if (charinfo::isLetter(*BufferPtr)) {
+  
+  // Handle boolean literals
+  if (*BufferPtr == '#') {
+    if (*(BufferPtr + 1) == 't') {
+      formToken(token, BufferPtr + 2, TokenKind::kw_true);
+      return;
+    }
+    if (*(BufferPtr + 1) == 'f') {
+      formToken(token, BufferPtr + 2, TokenKind::kw_false);
+      return;
+    }
+  }
+  
+  if (charinfo::isLetter(*BufferPtr) || *BufferPtr == '=' || *BufferPtr == '!') {
     const char *End = BufferPtr + 1;
-    while (charinfo::isAlphanumeric_(*End))
+    while (charinfo::isIdentifierChar(*End))
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
+    
+    // Check for keywords and operators
     if (Text == "read") {
       formToken(token, End, TokenKind::read);
       return;
@@ -51,6 +66,28 @@ void Lexer::next(Token &token) {
       formToken(token, End, TokenKind::kw_let);
       return;
     }
+    if (Text == "if") {
+      formToken(token, End, TokenKind::kw_if);
+      return;
+    }
+    if (Text == "and") {
+      formToken(token, End, TokenKind::and_);
+      return;
+    }
+    if (Text == "or") {
+      formToken(token, End, TokenKind::or_);
+      return;
+    }
+    if (Text == "not") {
+      formToken(token, End, TokenKind::not_);
+      return;
+    }
+    if (Text == "eq?") {
+      formToken(token, End, TokenKind::eq);
+      return;
+    }
+    
+    // Otherwise it's an identifier
     formToken(token, End, TokenKind::identifier);
     return;
   }
@@ -68,6 +105,22 @@ void Lexer::next(Token &token) {
     CASE('[', l_square);
     CASE(']', r_square);
 #undef CASE
+
+  case '<':
+    if (*(BufferPtr + 1) == '=') {
+      formToken(token, BufferPtr + 2, TokenKind::le);
+    } else {
+      formToken(token, BufferPtr + 1, TokenKind::lt);
+    }
+    break;
+    
+  case '>':
+    if (*(BufferPtr + 1) == '=') {
+      formToken(token, BufferPtr + 2, TokenKind::ge);
+    } else {
+      formToken(token, BufferPtr + 1, TokenKind::gt);
+    }
+    break;
 
   default:
     Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr);

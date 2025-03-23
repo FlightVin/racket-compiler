@@ -12,6 +12,7 @@ TOK(unknown)
 TOK(eof)
 TOK(integer_literal)
 TOK(identifier)
+TOK(boolean_literal)
 
 PUNCTUATOR(l_paren, "(")
 PUNCTUATOR(r_paren, ")")
@@ -20,9 +21,20 @@ PUNCTUATOR(r_square, "]")
 PUNCTUATOR(plus, "+")
 PUNCTUATOR(minus, "-")
 PUNCTUATOR(read, "read")
+PUNCTUATOR(eq, "eq?")
+PUNCTUATOR(lt, "<")
+PUNCTUATOR(le, "<=")
+PUNCTUATOR(gt, ">")
+PUNCTUATOR(ge, ">=")
+PUNCTUATOR(and_, "and")
+PUNCTUATOR(or_, "or")
+PUNCTUATOR(not_, "not")
 
 // Keywords with feature flags
 KEYWORD(let, KEYALL)
+KEYWORD(if, KEYALL)
+KEYWORD(true, KEYALL)
+KEYWORD(false, KEYALL)
 
 #undef KEYWORD
 #undef PUNCTUATOR

@@ -36,21 +36,46 @@ public:
       llvm::cast<Let>(Node).accept(*this);
       return;
     }
+    if (llvm::isa<Bool>(Node)) {
+      llvm::cast<Bool>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<If>(Node)) {
+      llvm::cast<If>(Node).accept(*this);
+      return;
+    }
     HasError = true;
   }
 
   virtual void visit(Prim &Node) override {
     auto &PrimNode = llvm::cast<Prim>(Node);
+    
+    // Handle unary primitives (read, not, unary minus)
     if (PrimNode.getOp() == tok::read) {
       return;
     }
+    
+    if (PrimNode.getOp() == tok::not_) {
+      if (PrimNode.getE1()) {
+        PrimNode.getE1()->accept(*this);
+        return;
+      }
+    }
+    
     if (PrimNode.getOp() == tok::minus) {
       if (PrimNode.getE1() && !PrimNode.getE2()) {
         PrimNode.getE1()->accept(*this);
         return;
       }
     }
-    if (PrimNode.getOp() == tok::plus || PrimNode.getOp() == tok::minus) {
+    
+    // Handle binary primitives (arithmetic, comparisons, and, or)
+    if (PrimNode.getOp() == tok::plus || PrimNode.getOp() == tok::minus ||
+        PrimNode.getOp() == tok::eq || PrimNode.getOp() == tok::lt || 
+        PrimNode.getOp() == tok::le || PrimNode.getOp() == tok::gt || 
+        PrimNode.getOp() == tok::ge || PrimNode.getOp() == tok::and_ || 
+        PrimNode.getOp() == tok::or_) {
+      
       if (PrimNode.getE1())
         PrimNode.getE1()->accept(*this);
       else
@@ -62,6 +87,7 @@ public:
         HasError = true;
       return;
     }
+    
     HasError = true; // Unknown primitive operation
   }
 
@@ -103,6 +129,34 @@ public:
   }
 
   virtual void visit(Int &Node) override { return; }
+  
+  virtual void visit(Bool &Node) override { return; }
+  
+  virtual void visit(If &Node) override {
+    // Check condition expression
+    if (Node.getCondition())
+      Node.getCondition()->accept(*this);
+    else {
+      HasError = true;
+      return;
+    }
+    
+    // Check then expression
+    if (Node.getThenExpr())
+      Node.getThenExpr()->accept(*this);
+    else {
+      HasError = true;
+      return;
+    }
+    
+    // Check else expression
+    if (Node.getElseExpr())
+      Node.getElseExpr()->accept(*this);
+    else
+      HasError = true;
+      
+    return;
+  }
 };
 } // namespace
 
