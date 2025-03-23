@@ -1,0 +1,6 @@
+(let ([x 5])
+  (let ([y 10])
+    (let ([z 15])
+      (if (and (< x y) (and (< y z) (eq? (+ x y) z)))
+          (+ x (+ y z))
+          (- z (- y x))))))
