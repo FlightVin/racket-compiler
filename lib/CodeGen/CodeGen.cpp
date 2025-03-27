@@ -251,45 +251,40 @@ public:
     V = PN;
   };
   
-  Value* visitLetExpr(Let &Node, llvm::BasicBlock* insertBlock); // NEW method, separated out let logic
-
   virtual void visit(Let &Node) override {
-      V = visitLetExpr(Node, Builder.GetInsertBlock());
-  };
-};
-
-Value* ToIRVisitor::visitLetExpr(Let &Node, llvm::BasicBlock* insertBlock) {
-    // 1. Generate code for binding expression into a temporary variable (alloca)
+    // Evaluate the binding expression
     Node.getBinding()->accept(*this);
     Value *BindingVal = V;
 
-    Builder.SetInsertPoint(insertBlock); // Use passed in insertBlock
-
+    // Now, create the alloca and store the binding value in the current, valid block.
     AllocaInst *Alloca = Builder.CreateAlloca(Int32Ty, nullptr, Node.getVar());
     Builder.CreateStore(BindingVal, Alloca);
 
+    // Save any old binding for the same variable
     AllocaInst *OldValue = nullptr;
     auto it = nameMap.find(Node.getVar());
-    if (it != nameMap.end()) {
-      OldValue = it->second;
-    }
+    if (it != nameMap.end())
+        OldValue = it->second;
     nameMap[Node.getVar()] = Alloca;
 
-    // 2. Generate code for the body expression (now, call accept on Body and return its result)
-    Value* BodyValue; // Variable to store body's result
+    // Evaluate the body in the current valid block
     Node.getBody()->accept(*this);
-    BodyValue = V; // Body expression's result is now in V
+    Value *BodyValue = V;
 
+    // Restore the previous binding if there was one
+    if (OldValue)
+        nameMap[Node.getVar()] = OldValue;
+    else
+        nameMap.erase(Node.getVar());
 
-    if (OldValue) {
-      nameMap[Node.getVar()] = OldValue;
-    } else {
-      nameMap.erase(Node.getVar());
-    }
+    // Return the result of the body expression
+    V = BodyValue;  
+  };
+};
 
-    // 3. Return the pointer to the temporary variable (alloca) - or in this case, return the BodyValue directly
-    return BodyValue; // Return result of body expression
-}
+// Value* ToIRVisitor::visitLetExpr(Let &Node) {
+
+// }
 
 
 } // namespace

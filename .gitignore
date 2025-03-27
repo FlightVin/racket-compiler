@@ -68,5 +68,7 @@ todo*
 repomix*
 
 # compiled files
-a.ll
+out.ll
+out.o
+out
 temp.txt
