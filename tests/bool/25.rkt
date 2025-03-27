@@ -1,4 +1,3 @@
-#lang racket
 (let ([x #t])
   (let ([y (if x #f #t)])
     (let ([z (if y #t #f)])

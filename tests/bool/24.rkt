@@ -1,4 +1,3 @@
-#lang racket
 (let ([cond1 #t]
       [cond2 #f])
   (if cond1

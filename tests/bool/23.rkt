@@ -1,4 +1,3 @@
-#lang racket
 (let ([x #t])
   (let ([y #f])
     (if x
