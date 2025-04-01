@@ -1,6 +1,7 @@
 #include "llracket/Sema/Sema.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector>
 
 namespace {
 class ProgramCheck : public ASTVisitor {
@@ -42,6 +43,22 @@ public:
     }
     if (llvm::isa<If>(Node)) {
       llvm::cast<If>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<SetBang>(Node)) {
+      llvm::cast<SetBang>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Begin>(Node)) {
+      llvm::cast<Begin>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<WhileLoop>(Node)) {
+      llvm::cast<WhileLoop>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Void>(Node)) {
+      llvm::cast<Void>(Node).accept(*this);
       return;
     }
     HasError = true;
@@ -155,6 +172,56 @@ public:
     else
       HasError = true;
       
+    return;
+  }
+
+  virtual void visit(SetBang &Node) override {
+    // Check if the variable exists
+    if (!Variables.count(Node.getVarName())) {
+      llvm::errs() << "Error: Attempting to set! undefined variable '" << Node.getVarName() << "'\n";
+      HasError = true;
+    }
+    // Check the value expression
+    if (Node.getValueExpr()) {
+      Node.getValueExpr()->accept(*this);
+    } else {
+      HasError = true;
+    }
+    // Optional: Add type/mutability checks here if implementing
+  }
+  
+  virtual void visit(Begin &Node) override {
+    if (Node.getExprs().empty()) {
+      // This case should ideally be caught by the parser
+      llvm::errs() << "Error: Empty begin block encountered\n";
+      HasError = true;
+      return;
+    }
+    for (Expr *expr : Node.getExprs()) {
+      if (expr) {
+        expr->accept(*this);
+      } else {
+        HasError = true; // Should not happen if parser is correct
+      }
+    }
+  }
+  
+  virtual void visit(WhileLoop &Node) override {
+    if (Node.getCondition()) {
+      Node.getCondition()->accept(*this);
+      // Optional: Check if condition is Boolean
+    } else {
+      HasError = true;
+    }
+    if (Node.getBody()) {
+      Node.getBody()->accept(*this);
+    } else {
+      HasError = true;
+    }
+  }
+  
+  virtual void visit(Void &Node) override {
+    // Typically no semantic checks needed for void itself
     return;
   }
 };

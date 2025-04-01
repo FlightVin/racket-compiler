@@ -72,3 +72,4 @@ out.ll
 out.o
 out
 temp.txt
+create_tests.bash

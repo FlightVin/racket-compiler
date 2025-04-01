@@ -29,12 +29,16 @@ PUNCTUATOR(ge, ">=")
 PUNCTUATOR(and_, "and")
 PUNCTUATOR(or_, "or")
 PUNCTUATOR(not_, "not")
+PUNCTUATOR(setb, "set!")
 
 // Keywords with feature flags
 KEYWORD(let, KEYALL)
 KEYWORD(if, KEYALL)
 KEYWORD(true, KEYALL)
 KEYWORD(false, KEYALL)
+KEYWORD(while, KEYALL)
+KEYWORD(begin, KEYALL)
+KEYWORD(void, KEYALL)
 
 #undef KEYWORD
 #undef PUNCTUATOR

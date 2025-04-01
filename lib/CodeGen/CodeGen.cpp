@@ -4,6 +4,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector>
 
 using namespace llvm;
 
@@ -72,6 +73,22 @@ public:
     }
     if (llvm::isa<If>(Node)) {
       llvm::cast<If>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<SetBang>(Node)) {
+      llvm::cast<SetBang>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Begin>(Node)) {
+      llvm::cast<Begin>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<WhileLoop>(Node)) {
+      llvm::cast<WhileLoop>(Node).accept(*this);
+      return;
+    }
+    if (llvm::isa<Void>(Node)) {
+      llvm::cast<Void>(Node).accept(*this);
       return;
     }
   };
@@ -280,6 +297,77 @@ public:
     // Return the result of the body expression
     V = BodyValue;  
   };
+
+  // Add visit methods for new AST nodes
+  virtual void visit(SetBang &Node) override {
+    // Find the variable's memory location (AllocaInst)
+    auto it = nameMap.find(Node.getVarName());
+    if (it == nameMap.end()) {
+      errs() << "Codegen Error: Variable " << Node.getVarName() << " not found for set!\n";
+      // Handle error appropriately, e.g., return void/zero
+      V = Int32Zero; // Or handle error differently
+      return;
+    }
+    AllocaInst *VarLoc = it->second;
+
+    // Generate code for the value expression
+    Node.getValueExpr()->accept(*this);
+    Value *ValToStore = V;
+
+    // Create the store instruction
+    Builder.CreateStore(ValToStore, VarLoc);
+
+    // The result of set! is often void. Represent as 0 for now.
+    V = Int32Zero;
+  }
+
+  virtual void visit(Begin &Node) override {
+    Value *lastVal = Int32Zero; // Default to 0 if begin is empty (though parser should prevent)
+    const auto &exprs = Node.getExprs();
+    for (Expr *expr : exprs) {
+      expr->accept(*this);
+      lastVal = V; // Keep track of the last expression's value
+    }
+    V = lastVal; // The value of begin is the value of the last expression
+  }
+
+  virtual void visit(WhileLoop &Node) override {
+    Function *TheFunction = Builder.GetInsertBlock()->getParent();
+
+    // Create basic blocks
+    BasicBlock *LoopCondBB = BasicBlock::Create(M->getContext(), "loop.cond", TheFunction);
+    BasicBlock *LoopBodyBB = BasicBlock::Create(M->getContext(), "loop.body");
+    BasicBlock *LoopEndBB = BasicBlock::Create(M->getContext(), "loop.end");
+
+    // Branch from current block to condition check
+    Builder.CreateBr(LoopCondBB);
+
+    // --- Loop Condition Block ---
+    Builder.SetInsertPoint(LoopCondBB);
+    Node.getCondition()->accept(*this);
+    Value *CondV = V;
+    // Convert condition to i1 (boolean)
+    CondV = Builder.CreateICmpNE(CondV, Int32Zero, "loopcond"); // Assuming 0 is false, non-zero is true
+    // Conditional branch
+    Builder.CreateCondBr(CondV, LoopBodyBB, LoopEndBB);
+
+    // --- Loop Body Block ---
+    LoopBodyBB->insertInto(TheFunction); // Add body block to function
+    Builder.SetInsertPoint(LoopBodyBB);
+    Node.getBody()->accept(*this); // Generate body code
+    Builder.CreateBr(LoopCondBB); // Branch back to condition
+
+    // --- Loop End Block ---
+    LoopEndBB->insertInto(TheFunction); // Add end block to function
+    Builder.SetInsertPoint(LoopEndBB);
+
+    // The result of a while loop is void (represented as 0)
+    V = Int32Zero;
+  }
+
+  virtual void visit(Void &Node) override {
+    V = Int32Zero; // Represent void as integer 0
+  }
 };
 
 // Value* ToIRVisitor::visitLetExpr(Let &Node) {

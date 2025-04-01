@@ -86,6 +86,22 @@ void Lexer::next(Token &token) {
       formToken(token, End, TokenKind::eq);
       return;
     }
+    if (Text == "set!") {
+      formToken(token, End, TokenKind::setb);
+      return;
+    }
+    if (Text == "while") {
+      formToken(token, End, TokenKind::kw_while);
+      return;
+    }
+    if (Text == "void") {
+      formToken(token, End, TokenKind::kw_void);
+      return;
+    }
+    if (Text == "begin") {
+      formToken(token, End, TokenKind::kw_begin);
+      return;
+    }
     
     // Otherwise it's an identifier
     formToken(token, End, TokenKind::identifier);
