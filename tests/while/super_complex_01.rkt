@@ -1,0 +1,63 @@
+(let ([level1_max (read)])
+ (let ([level1_i 0])
+  (let ([total_sum 0])
+   (begin
+    (while (< level1_i level1_max)
+     (begin
+      (let ([level2_max (read)])
+       (let ([level2_i 0])
+        (begin
+         (while (< level2_i level2_max)
+          (begin
+           (let ([level3_max (read)])
+            (let ([level3_i 0])
+             (begin
+              (while (< level3_i level3_max)
+               (begin
+                (let ([level4_max (read)])
+                 (let ([level4_i 0])
+                  (begin
+                   (while (< level4_i level4_max)
+                    (begin
+                     (let ([level5_max (read)])
+                      (let ([level5_i 0])
+                       (begin
+                        (while (< level5_i level5_max)
+                         (begin
+                          (set! total_sum (+ total_sum (+ level1_i (+ level2_i (+ level3_i (+ level4_i level5_i))))))
+                          (set! level5_i (+ level5_i 1))
+                         )
+                        )
+                        (void)
+                       )
+                      )
+                     )
+                     (set! level4_i (+ level4_i 1))
+                    )
+                   )
+                   (void)
+                  )
+                 )
+                )
+                (set! level3_i (+ level3_i 1))
+               )
+              )
+              (void)
+             )
+            )
+           )
+           (set! level2_i (+ level2_i 1))
+          )
+         )
+         (void)
+        )
+       )
+      )
+      (set! level1_i (+ level1_i 1))
+     )
+    )
+    total_sum
+   )
+  )
+ )
+)

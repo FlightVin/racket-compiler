@@ -89,6 +89,77 @@ Expr *Parser::parseExpr() {
     return new If(condition, thenExpr, elseExpr);
   }
 
+  // Handle set! expression: (set! <var> <expr>)
+  if (Tok.is(TokenKind::setb)) {
+    llvm::outs() << "entering set!" << "\n";
+    advance(); // Consume 'set!'
+    if (!Tok.is(TokenKind::identifier)) {
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected variable name after set!");
+      skipUntil(tok::r_paren);
+      return nullptr;
+    }
+    StringRef varName = Tok.getText();
+    advance(); // Consume variable name
+
+    Expr *valueExpr = parseExpr();
+    if (!valueExpr) return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    llvm::outs() << "exiting set!" << "\n";
+    return new SetBang(varName, valueExpr);
+  }
+
+  // Handle while expression: (while <cond> <body>)
+  if (Tok.is(TokenKind::kw_while)) {
+    llvm::outs() << "entering while" << "\n";
+    advance(); // Consume 'while'
+
+    Expr *condition = parseExpr();
+    if (!condition) return ErrorHandler();
+
+    Expr *body = parseExpr();
+    if (!body) return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    llvm::outs() << "exiting while" << "\n";
+    return new WhileLoop(condition, body);
+  }
+
+  // Handle begin expression: (begin <expr1> <expr2> ...)
+  if (Tok.is(TokenKind::kw_begin)) {
+    llvm::outs() << "entering begin" << "\n";
+    advance(); // Consume 'begin'
+    std::vector<Expr*> exprs;
+    while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
+      Expr *expr = parseExpr();
+      if (!expr) {
+        // Clean up allocated expressions if error occurs
+        for (Expr *e : exprs) delete e;
+        return ErrorHandler();
+      }
+      exprs.push_back(expr);
+    }
+    if (exprs.empty()) {
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected at least one expression in begin");
+      return ErrorHandler();
+    }
+    if (!consume(TokenKind::r_paren)) {
+      for (Expr *e : exprs) delete e;
+      return ErrorHandler();
+    }
+    llvm::outs() << "exiting begin" << "\n";
+    return new Begin(exprs);
+  }
+
+  // Handle void expression: (void)
+  if (Tok.is(TokenKind::kw_void)) {
+    llvm::outs() << "entering void" << "\n";
+    advance(); // Consume 'void'
+    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    llvm::outs() << "exiting void" << "\n";
+    return new Void();
+  }
+
   // Handle primitive read
   if (Tok.is(TokenKind::read)) {
     advance();

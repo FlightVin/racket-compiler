@@ -5,6 +5,7 @@
 #include <any>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
+#include <vector>
 
 class AST;
 class Program;
@@ -16,6 +17,10 @@ class Var;
 class Let;
 class Bool;
 class If;
+class SetBang;
+class Begin;
+class WhileLoop;
+class Void;
 
 class ASTVisitor {
 public:
@@ -28,6 +33,10 @@ public:
   virtual void visit(Int &) = 0;
   virtual void visit(Bool &) = 0;
   virtual void visit(If &) = 0;
+  virtual void visit(SetBang &) = 0;
+  virtual void visit(Begin &) = 0;
+  virtual void visit(WhileLoop &) = 0;
+  virtual void visit(Void &) = 0;
 };
 
 class AST {
@@ -52,7 +61,8 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf,
+    ExprSetBang, ExprBegin, ExprWhileLoop, ExprVoid};
 
 private:
   const ExprKind Kind;
@@ -62,6 +72,7 @@ public:
 
   ExprKind getKind() const { return Kind; }
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  // virtual void accept(ASTVisitor &V) override;
 };
 
 class Prim : public Expr {
@@ -148,6 +159,54 @@ public:
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprIf; }
+};
+
+class SetBang : public Expr {
+  StringRef VarName;
+  Expr *ValueExpr;
+public:
+  SetBang(StringRef VarName, Expr *ValueExpr)
+      : Expr(ExprSetBang), VarName(VarName), ValueExpr(ValueExpr) {}
+
+  StringRef getVarName() const { return VarName; }
+  Expr *getValueExpr() const { return ValueExpr; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprSetBang; }
+};
+
+class Begin : public Expr {
+  std::vector<Expr*> Exprs;
+public:
+  Begin(std::vector<Expr*> Exprs) : Expr(ExprBegin), Exprs(std::move(Exprs)) {}
+
+  const std::vector<Expr*>& getExprs() const { return Exprs; }
+  Expr* getResultExpr() const { return Exprs.empty() ? nullptr : Exprs.back(); }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprBegin; }
+};
+
+class WhileLoop : public Expr {
+  Expr *Condition;
+  Expr *Body;
+public:
+  WhileLoop(Expr *Condition, Expr *Body)
+      : Expr(ExprWhileLoop), Condition(Condition), Body(Body) {}
+
+  Expr *getCondition() const { return Condition; }
+  Expr *getBody() const { return Body; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprWhileLoop; }
+};
+
+class Void : public Expr {
+public:
+  Void() : Expr(ExprVoid) {}
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprVoid; }
 };
 
 #endif
