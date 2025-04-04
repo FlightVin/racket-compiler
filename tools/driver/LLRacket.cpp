@@ -1,5 +1,12 @@
 #include "LLRacket.h"
+#include "llracket/AST/AST.h" // Make sure AST is included for Tree pointer
 #include "llracket/Basic/Diagnostic.h"
+#include "llracket/Basic/Type.h" // Include Type for the map key
+#include "llracket/CodeGen/CodeGen.h"
+#include "llracket/Lexer/Lexer.h"
+#include "llracket/Parser/Parser.h"
+#include "llracket/Sema/Sema.h"
+#include <llvm/ADT/DenseMap.h>   // Include DenseMap for the type map
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -29,50 +36,57 @@ int main(int argc_, const char **argv_) {
   }
 
   // Source manager class to manage source buffers
-  llvm::SourceMgr *SrcMgr = new llvm::SourceMgr();
-  DiagnosticsEngine Diags(*SrcMgr);
+  llvm::SourceMgr SrcMgr; // Removed 'new' - manage on stack
+  DiagnosticsEngine Diags(SrcMgr);
 
-  LLRacket Compiler(SrcMgr, Diags);
-  Compiler.getSourceMgr()->AddNewSourceBuffer(std::move(*FileOrErr),
-                                              llvm::SMLoc());
+  // Transfer ownership of the buffer to SourceMgr
+  SrcMgr.AddNewSourceBuffer(std::move(*FileOrErr), llvm::SMLoc());
+
+  LLRacket Compiler(&SrcMgr, Diags); // Pass SrcMgr by pointer if needed by LLRacket, or adjust LLRacket constructor
 
   return Compiler.exec();
 }
 
 int LLRacket::exec() {
-  // Parse the program to AST
+  // 1. Lexing
   Lexer Lex(*SrcMgr, Diags);
 
-  // Token Tok;
-  // Lex.next(Tok);
-  // while (Tok.getKind() != tok::eof) {
-  //     llvm::outs() << "Token Kind: " << tok::getTokenName(Tok.getKind()) << ", Text: '" << Tok.getText() << "'\n";
-  //     Lex.next(Tok);
-  // }
-  // return 0; // Exit early after token printing
-
-
+  // 2. Parsing
   Parser P(Lex, Diags);
   AST *Tree = P.parse();
+  // Check for parsing errors (reported by Parser via Diags)
   if (!Tree || Diags.numErrors()) {
-    llvm::errs()<<Diags.numErrors()<<"\n";
-    llvm::errs() << "Syntax error\n";
-    return 1;
+    llvm::errs() << "Syntax error occurred during parsing.\n";
+    return 1; // Return distinct code for syntax errors
   }
 
-  // Semantic analysis
-  Sema S;
-  if (!S.semantic(Tree)) {
-    llvm::errs() << "Semantic error\n";
-    return 2;
-  }
+  // 3. Semantic Analysis (Type Checking)
+  Sema S(Diags); // Instantiate Sema with the DiagnosticsEngine
+  bool typeCheckSuccessful = S.typeCheck(Tree); // Use the typeCheck method
 
-  // Compile to LLVM IR
-  CodeGen CG(Module.get(), Ctx.get());
+  // Check for semantic/type errors
+  if (!typeCheckSuccessful || Diags.numErrors()) {
+      // Diags engine would have already printed specific errors
+      llvm::errs() << "Semantic or Type error occurred.\n";
+      return 2; // Return distinct code for semantic/type errors
+  }
+  // Retrieve the type results map after successful check
+  const llvm::DenseMap<Expr *, ExprType>& typeResults = S.getExprTypes();
+
+  // 4. Code Generation
+  // Instantiate CodeGen, passing the type results map
+  // CodeGen CG(Module.get(), Ctx.get()); // <- REMOVE OR COMMENT OUT THIS INCORRECT LINE
+  CodeGen CG(Module.get(), Ctx.get(), &typeResults); // <- USE THIS CORRECT LINE (pass address of map)
+
+  // Compile the AST to LLVM IR
   CG.compile(Tree);
 
-  Module->print(llvm::outs(), nullptr);
-  // save to a .ll file
+  // Optional: Print the generated IR to standard output
+  // Module->print(llvm::outs(), nullptr);
+
+  // Save the module to the specified output file
   saveModuleToFile(Output);
+
+  // Assuming successful compilation if we reach here
   return 0;
 }
