@@ -45,6 +45,16 @@ class ToIRVisitor : public ASTVisitor {
   StringMap<AllocaInst *> nameMap; // Map variable names to their memory locations (AllocaInst)
   const llvm::DenseMap<Expr *, ExprType> &ExprTypes; // Reference to the type map
 
+  Function* getOrDeclareReadValue() {
+    Function* Func = M->getFunction("read_value");
+    if (!Func) {
+        // Function type: i32 read_value(i32 type) - Takes type flag, returns int
+        FunctionType *FT = FunctionType::get(Int32Ty, {Int32Ty}, false); // Takes i32 argument now
+        Func = Function::Create(FT, GlobalValue::ExternalLinkage, "read_value", M);
+    }
+    return Func;
+  }
+
   /** Helper to get LLVM type from ExprType */
   Type* getLLVMType(ExprType T) {
     switch(T) {
@@ -74,16 +84,6 @@ class ToIRVisitor : public ASTVisitor {
        llvm_unreachable("Invalid ExprType for getLLVMPtrType");
    }
 
-  // --- Function declaration helpers ---
-  Function* getOrDeclareReadValue() {
-      Function* Func = M->getFunction("read_value");
-      if (!Func) {
-          // Function type: i32 read_value() - Simplified, always reads int
-          FunctionType *FT = FunctionType::get(Int32Ty, {}, false); // Takes no arguments now
-          Func = Function::Create(FT, GlobalValue::ExternalLinkage, "read_value", M);
-      }
-      return Func;
-  }
 
   Function* getOrDeclareWriteInt() {
       Function* Func = M->getFunction("write_int");
@@ -595,8 +595,10 @@ public:
     switch (Node.getOp()) {
         case tok::read: {
             Function* ReadValueFn = getOrDeclareReadValue();
-            // ReadValue simplified to take no args and return i32
-            V = Builder.CreateCall(ReadValueFn, {}, "readval");
+            // ReadValue takes an integer type argument: 0 for integer.
+            // Create a constant i32 value 0.
+            Constant* typeArg = ConstantInt::get(Int32Ty, 0, true);
+            V = Builder.CreateCall(ReadValueFn, {typeArg}, "readval"); // Pass the type argument
              // Sema ensures ResultType is Integer, so ResultLLVMType should be Int32Ty
              if (V->getType() != ResultLLVMType) { // Defensive check
                   llvm::errs() << "Codegen Internal Error: read_value call did not return expected type " << *ResultLLVMType << "\n";
