@@ -1,0 +1,1 @@
+(let ([abc (read)]) (eq? abc 10))
