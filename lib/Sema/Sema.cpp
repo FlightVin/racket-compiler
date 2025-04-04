@@ -28,12 +28,13 @@ class TypeCheckVisitor : public ASTVisitor {
   bool HasError; // Flag to track if any error occurred
 
   // Helper to get location - assumes AST nodes store it.
-  // TODO: Adapt this if your AST nodes store location differently.
-  //       If getLocation() is not a method, you might need to store
-  //       the token/location during parsing and retrieve it here.
+  // NOTE: This currently relies on AST nodes having location info.
+  // If AST nodes don't store SMLoc, this will return an invalid location,
+  // and error messages won't point to the exact source code position.
+  // The Parser needs modification to store locations in AST nodes for this to work fully.
   llvm::SMLoc getLoc(Expr *Node) {
        if (Node) {
-           // Example: if Node has a getLocation method added during parsing
+           // If Node had a getLocation method added during parsing:
            // return Node->getLocation();
        }
        return llvm::SMLoc(); // Return invalid location as fallback
@@ -76,6 +77,7 @@ class TypeCheckVisitor : public ASTVisitor {
   /** Recursive helper to visit nodes and return their type */
   ExprType visitAndGetType(Expr *Node) {
     if (!Node) {
+      // Report error at an unknown location as we don't have a node
       reportError(llvm::SMLoc(), diag::err_internal_compiler, "Null AST node encountered during type checking");
       // HasError already set by reportError
       return ExprType::Error;
@@ -86,14 +88,14 @@ class TypeCheckVisitor : public ASTVisitor {
     if (it != ExprTypes.end()) {
       // If the visit method itself reported an error, ensure we return Error type
       if (HasError && it->second != ExprType::Error) {
-           // This situation should ideally be avoided by visit methods returning Error directly
-           // But as a safeguard:
-           // llvm::errs() << "Warning: HasError flag set but recorded type is not Error for node " << Node << "\n";
+           // This safeguard catches cases where HasError was set but the recorded type wasn't Error.
+           // Ideally, visit methods should directly record Error type when they set HasError.
            return ExprType::Error;
       }
       return it->second;
     }
     // Should not happen if every visit method records a type OR returns Error
+    // Report error associated with the node's location (if available)
     reportError(getLoc(Node), diag::err_internal_compiler, "Type not recorded for visited node and no error returned.");
     recordType(Node, ExprType::Error); // Record error type as fallback
     return ExprType::Error;
@@ -114,12 +116,14 @@ public:
 
   virtual void visit(Program &Node) override {
     if (Node.getExpr()) {
-      ExprType finalType = visitAndGetType(Node.getExpr());
-      // Check if the final program expression type is Integer AFTER checking sub-expression
-      if (!HasError && finalType != ExprType::Integer) {
-         reportExpectedTypeError(getLoc(Node.getExpr()), ExprType::Integer, finalType, "for program result");
-      }
+      // Visit the main expression to perform type checking on it and its children.
+      // The type of the program is implicitly the type of its main expression.
+      // We no longer enforce that the program's result *must* be Integer.
+      visitAndGetType(Node.getExpr());
+      // The actual printing/handling of the final result's type (Int, Bool, Void)
+      // is managed by CodeGen calling the appropriate runtime functions.
     } else {
+      // Report error if the program is empty
       reportError(getLoc(), diag::err_empty_program);
       // HasError set by reportError
     }
@@ -138,10 +142,9 @@ public:
         case Expr::ExprBegin:     llvm::cast<Begin>(Node).accept(*this); break;
         case Expr::ExprWhileLoop: llvm::cast<WhileLoop>(Node).accept(*this); break;
         case Expr::ExprVoid:      llvm::cast<Void>(Node).accept(*this); break;
-        // No default case; missing enum values will trigger compiler warning/error if enabled
+        // No default case; missing enum values will trigger compiler warning/error if enabled (-Wswitch)
+        // default: llvm_unreachable("Unknown Expr Kind encountered in Sema dispatcher");
     }
-    // Assertion for safety, will catch unhandled enum values at runtime if not caught by compiler
-    // llvm_unreachable("Unknown Expr Kind encountered in Sema dispatcher");
   }
 
   // --- Visit methods for leaf/simple expressions ---
@@ -178,7 +181,7 @@ public:
       StringRef varName = Node.getVar();
       auto oldBindingIt = CurrentVarTypes.find(varName);
       bool hadOldBinding = (oldBindingIt != CurrentVarTypes.end());
-      ExprType oldType = ExprType::Error; // Placeholder
+      ExprType oldType = ExprType::Error; // Placeholder, only used if hadOldBinding is true
       if (hadOldBinding) {
         oldType = oldBindingIt->getValue(); // Store old type
       }
@@ -203,7 +206,8 @@ public:
         bodyType = ExprType::Error; // Propagate the error type from binding
     }
 
-    recordType(&Node, bodyType); // The type of the Let is the type of its body (or Error)
+    // The type of the Let is the type of its body (or Error if binding/body had error)
+    recordType(&Node, bodyType);
   }
 
   virtual void visit(Prim &Node) override {
@@ -221,15 +225,14 @@ public:
     // If operands had errors, propagate Error type immediately
     if ((E1 && T1 == ExprType::Error) || (E2 && T2 == ExprType::Error)) {
          recordType(&Node, ExprType::Error);
-         // HasError is already true from sub-visit
+         // HasError is already true from sub-visit(s)
          return;
     }
 
     // Type checking based on operator
     switch (Node.getOp()) {
       case tok::read:
-        // Assuming 'read' contextually determined (by parent) to yield Integer
-        // Sema itself just assigns Integer here; CodeGen uses context.
+        // 'read' always yields an Integer in this language subset.
         resultType = ExprType::Integer;
         break;
 
@@ -242,6 +245,7 @@ public:
            if (T1 != ExprType::Integer) { reportExpectedTypeError(getLoc(E1), ExprType::Integer, T1, "for operand of unary -"); OpError = true; }
            if (!OpError) resultType = ExprType::Integer;
         } else { // Wrong number of operands
+             // Use getLoc(&Node) for errors related to the operation itself
              reportError(getLoc(&Node), diag::err_wrong_operand_count, tok::getTokenName(Node.getOp())); OpError = true;
         }
         break;
@@ -258,8 +262,13 @@ public:
 
       case tok::eq:
         if (E1 && E2) {
+          // Check for type consistency: both Integer or both Boolean
           if (!((T1 == ExprType::Integer && T2 == ExprType::Integer) || (T1 == ExprType::Boolean && T2 == ExprType::Boolean))) {
-               reportError(getLoc(&Node), diag::err_invalid_operands, "Operands for eq? must be both Integer or both Boolean"); OpError = true;
+               // Provide a more specific error message for eq?
+               reportError(getLoc(&Node), diag::err_invalid_operands,
+                 "Operands for eq? must be both Integer or both Boolean, but got " +
+                 llvm::Twine(getTypeName(T1)) + " and " + llvm::Twine(getTypeName(T2)));
+                OpError = true;
           }
           if (!OpError) resultType = ExprType::Boolean;
         } else {
@@ -289,37 +298,54 @@ public:
       default:
         reportError(getLoc(&Node), diag::err_internal_compiler,
             "Unknown primitive operator in Sema: " + llvm::Twine(tok::getTokenName(Node.getOp())));
+        OpError = true; // Mark as error
         // resultType remains Error
         break;
     }
-    recordType(&Node, resultType); // Record Error if OpError was true
+    // Record Error if OpError was true, otherwise record the determined resultType
+    recordType(&Node, OpError ? ExprType::Error : resultType);
   }
 
   virtual void visit(If &Node) override {
     ExprType condType = visitAndGetType(Node.getCondition());
-    // Don't check branches if condition itself had error
-    ExprType thenType = (condType == ExprType::Error) ? ExprType::Error : visitAndGetType(Node.getThenExpr());
-    ExprType elseType = (condType == ExprType::Error) ? ExprType::Error : visitAndGetType(Node.getElseExpr());
+    ExprType thenType = ExprType::Error; // Initialize to Error
+    ExprType elseType = ExprType::Error; // Initialize to Error
     ExprType resultType = ExprType::Error; // Default to error
 
     bool condError = false;
     bool branchError = false;
 
-    if (condType != ExprType::Boolean && condType != ExprType::Error) {
+    // Check condition type first
+    if (condType != ExprType::Error && condType != ExprType::Boolean) {
       reportExpectedTypeError(getLoc(Node.getCondition()), ExprType::Boolean, condType, "for if condition");
       condError = true;
     }
 
-    // Only check branch consistency if branches themselves didn't have errors
-    if (thenType != ExprType::Error && elseType != ExprType::Error && thenType != elseType) {
-      Diags.report(getLoc(&Node), diag::err_if_branch_mismatch, getTypeName(thenType), getTypeName(elseType));
-      HasError = true; // Manually flag error when using Diags.report directly
-      branchError = true;
+    // Only check branches if condition was okay (or already had an error)
+    // Avoids cascading errors if condition was wrong type.
+    if (condType != ExprType::Error || condError) { // Check branches if condition was Error OR if we just reported condError
+        thenType = visitAndGetType(Node.getThenExpr());
+        elseType = visitAndGetType(Node.getElseExpr());
     }
 
-    // Result type is the common branch type ONLY if condition was okay AND branches were okay and matched
+
+    // Only check branch consistency if:
+    // 1. The condition didn't have a type error (condError is false)
+    // 2. Both branches themselves resolved without errors
+    if (!condError && thenType != ExprType::Error && elseType != ExprType::Error) {
+        if (thenType != elseType) {
+            Diags.report(getLoc(&Node), diag::err_if_branch_mismatch, getTypeName(thenType), getTypeName(elseType));
+            HasError = true; // Manually flag error when using Diags.report directly
+            branchError = true;
+        }
+    }
+
+    // Determine final result type
     if (!condError && !branchError && thenType != ExprType::Error) {
-        resultType = thenType; // thenType and elseType must be same here
+        // Result type is the common branch type ONLY if condition was okay AND branches were okay and matched
+        resultType = thenType; // thenType and elseType must be the same here
+    } else {
+        // Otherwise, the result type is Error (already default)
     }
 
     recordType(&Node, resultType); // Records Error if any issue occurred
@@ -333,14 +359,15 @@ public:
      if (it == CurrentVarTypes.end()) {
          reportError(getLoc(&Node), diag::err_set_undefined, Node.getVarName());
          // Still visit value expr to find errors within it, but can't check consistency
-         visitAndGetType(Node.getValueExpr());
-         valueError = true; // Mark as error since var is undefined
+         visitAndGetType(Node.getValueExpr()); // Ignore result, just check for errors
+         // Variable is undefined, so this operation results in an error state, but set! itself is Void type.
+         // HasError is already set by reportError.
      } else {
          varType = it->getValue();
          ExprType valueType = visitAndGetType(Node.getValueExpr());
          valueError = (valueType == ExprType::Error); // Note if value expr had error
 
-         // Only check for mismatch if both types are known and not Error
+         // Only check for mismatch if variable was found AND value expr had no error
          if (varType != ExprType::Error && !valueError) {
              if (varType != valueType) {
                  reportTypeError(getLoc(Node.getValueExpr()), varType, valueType,
@@ -350,7 +377,7 @@ public:
          }
      }
 
-     // set! always results in Void, even if errors occurred
+     // set! always results in Void, even if errors occurred during analysis.
      recordType(&Node, ExprType::Void);
   }
 
@@ -360,16 +387,22 @@ public:
     bool subExprError = false;
 
     if (exprs.empty()) {
+       // Report error at the 'begin' location (approximated by Node)
        reportError(getLoc(&Node), diag::err_empty_begin);
        resultType = ExprType::Error;
        subExprError = true;
     } else {
-       for (Expr *expr : exprs) {
-           resultType = visitAndGetType(expr); // Type is the type of the LAST expr
+       for (size_t i = 0; i < exprs.size(); ++i) {
+           Expr *expr = exprs[i];
+           ExprType currentExprType = visitAndGetType(expr);
            // If any sub-expression causes an error, remember it
-           if (resultType == ExprType::Error) {
+           if (currentExprType == ExprType::Error) {
                subExprError = true;
                // Don't break, continue checking other expressions for more errors
+           }
+           // The type of the 'begin' block is the type of the LAST expression
+           if (i == exprs.size() - 1) {
+               resultType = currentExprType;
            }
        }
     }
@@ -380,7 +413,7 @@ public:
   virtual void visit(WhileLoop &Node) override {
     ExprType condType = visitAndGetType(Node.getCondition());
     bool condError = false;
-    if (condType != ExprType::Boolean && condType != ExprType::Error) {
+    if (condType != ExprType::Error && condType != ExprType::Boolean) {
        reportExpectedTypeError(getLoc(Node.getCondition()), ExprType::Boolean, condType, "for while condition");
        condError = true;
     }
@@ -392,7 +425,7 @@ public:
     recordType(&Node, ExprType::Void);
     // Ensure HasError reflects errors found in condition or body
     if (condError || bodyError) {
-        HasError = true;
+        HasError = true; // Make sure global error flag is set if local errors occurred
     }
   }
 
@@ -402,15 +435,21 @@ public:
 
 // --- Sema class methods ---
 bool Sema::typeCheck(AST *Tree) {
-  if (!Tree)
-    return false; // Or report an error?
+  if (!Tree) {
+    // Potentially report an error if the AST root is null
+    // Diags.report(llvm::SMLoc(), diag::err_internal_compiler, "Null AST provided to Sema");
+    return false;
+  }
   ExprTypes.clear();
-  CurrentVarTypes.clear();
+  CurrentVarTypes.clear(); // Reset state for a new analysis run
+
   // Construct visitor with DiagnosticsEngine reference
   TypeCheckVisitor Checker(Diags, ExprTypes, CurrentVarTypes);
   Tree->accept(Checker);
-  // Check both the visitor's internal flag and the diagnostics engine count
-  // Note: Checker.hasError() might be redundant if reportError always sets Diags error count.
+
+  // Check both the visitor's internal flag and the diagnostics engine count.
+  // This is robust: ensures errors reported via Diags are caught, and also
+  // catches potential internal logic errors flagged by Checker.hasError().
   return !Checker.hasError() && (Diags.numErrors() == 0);
 }
 

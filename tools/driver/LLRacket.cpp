@@ -59,6 +59,7 @@ int LLRacket::exec() {
     llvm::errs() << "Syntax error occurred during parsing.\n";
     return 1; // Return distinct code for syntax errors
   }
+  llvm::outs() << "Parsing completed" << "\n";
 
   // 3. Semantic Analysis (Type Checking)
   Sema S(Diags); // Instantiate Sema with the DiagnosticsEngine
@@ -72,11 +73,13 @@ int LLRacket::exec() {
   }
   // Retrieve the type results map after successful check
   const llvm::DenseMap<Expr *, ExprType>& typeResults = S.getExprTypes();
+  llvm::outs() << "Sem completed" << "\n";
 
   // 4. Code Generation
   // Instantiate CodeGen, passing the type results map
   // CodeGen CG(Module.get(), Ctx.get()); // <- REMOVE OR COMMENT OUT THIS INCORRECT LINE
   CodeGen CG(Module.get(), Ctx.get(), &typeResults); // <- USE THIS CORRECT LINE (pass address of map)
+  llvm::outs() << "Codegen completed" << "\n";
 
   // Compile the AST to LLVM IR
   CG.compile(Tree);

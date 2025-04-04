@@ -1,20 +1,18 @@
 import os
 import subprocess
-import tempfile
 import argparse
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Run tests for llracket.")
-parser.add_argument("--llracket", required=True,
-                    help="Path to the llracket binary.")
-parser.add_argument("--runtime", required=True,
-                    help="Path to the runtime.c file.")
-parser.add_argument("--build-dir", required=True,
-                    help="Path to the build directory.")
+parser.add_argument("--llracket", required=True, help="Path to the llracket binary.")
+parser.add_argument("--runtime", required=True, help="Path to the runtime.c file.")
+parser.add_argument("--build-dir", required=True, help="Path to the build directory.")
 args = parser.parse_args()
 
 
-def run_test(test_program, test_input, test_output, expect_error, build_dir, quiet=False):
+def run_test(
+    test_program, test_input, test_output, expect_error, build_dir, quiet=False
+):
     """
     Runs the multi-step test process for a given .rkt file.
     """
@@ -42,6 +40,11 @@ def run_test(test_program, test_input, test_output, expect_error, build_dir, qui
         print(f"❌ Step 1 failed (llracket): {test_name}")
         print(result.stderr)
         return False
+    else:
+        if expect_error:
+            print(f"❌ Test failed (unexpected success): {test_name}")
+            print(result.stdout)
+            return False
 
     # Step 2: Run llc to generate the .s file
     result = subprocess.run(
@@ -112,12 +115,9 @@ def main():
                 test_program = os.path.join(root, file)
 
                 # Construct the paths to the .rkt.in and .rkt.out files
-                test_input_file = os.path.join(
-                    root, file.replace(".rkt", ".rkt.in"))
-                test_output_file = os.path.join(
-                    root, file.replace(".rkt", ".rkt.out"))
-                err_file = os.path.join(
-                    root, file.replace(".rkt", ".rkt.err"))
+                test_input_file = os.path.join(root, file.replace(".rkt", ".rkt.in"))
+                test_output_file = os.path.join(root, file.replace(".rkt", ".rkt.out"))
+                err_file = os.path.join(root, file.replace(".rkt", ".rkt.err"))
 
                 test_input = ""
                 test_output = ""
@@ -132,8 +132,14 @@ def main():
 
                 total_tests += 1
                 # Run the test
-                passed_tests += run_test(test_program, test_input, test_output,
-                                         expect_compile_error, build_test_dir, quiet=True)
+                passed_tests += run_test(
+                    test_program,
+                    test_input,
+                    test_output,
+                    expect_compile_error,
+                    build_test_dir,
+                    quiet=True,
+                )
 
     print(f"Passed {passed_tests}/{total_tests} tests.")
 
