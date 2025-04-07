@@ -1,6 +1,6 @@
 (let ([x (read)])
     (begin
-        (while (read)
+        (while (eq? 2 (read))
             (begin
                 (set! x (+ x 1))
             )
