@@ -595,15 +595,26 @@ public:
     switch (Node.getOp()) {
         case tok::read: {
             Function* ReadValueFn = getOrDeclareReadValue();
-            // ReadValue takes an integer type argument: 0 for integer.
-            // Create a constant i32 value 0.
-            Constant* typeArg = ConstantInt::get(Int32Ty, 0, true);
+            // Create the appropriate type argument based on the expected result type:
+            // 0 for integer, 1 for boolean
+            int typeArgVal = 0; // Default to integer type (0)
+            
+            if (ResultType == ExprType::Boolean) {
+                typeArgVal = 1; // Use 1 to indicate boolean type
+            }
+            
+            Constant* typeArg = ConstantInt::get(Int32Ty, typeArgVal, true);
             V = Builder.CreateCall(ReadValueFn, {typeArg}, "readval"); // Pass the type argument
-             // Sema ensures ResultType is Integer, so ResultLLVMType should be Int32Ty
-             if (V->getType() != ResultLLVMType) { // Defensive check
-                  llvm::errs() << "Codegen Internal Error: read_value call did not return expected type " << *ResultLLVMType << "\n";
-                  V = Int32Zero; // Fallback
-             }
+            
+            // Check if result needs conversion (read_value always returns i32)
+            if (ResultLLVMType == Int1Ty) {
+                // Convert the i32 result to i1 boolean for boolean type
+                V = Builder.CreateICmpNE(V, Int32Zero, "read_bool_conv");
+            } else if (V->getType() != ResultLLVMType) { // Defensive check
+                llvm::errs() << "Codegen Internal Error: read_value call did not return expected type " 
+                              << *ResultLLVMType << "\n";
+                V = Int32Zero; // Fallback
+            }
             break;
         }
         case tok::plus: V = Builder.CreateNSWAdd(E1V, E2V, "addtmp"); break;

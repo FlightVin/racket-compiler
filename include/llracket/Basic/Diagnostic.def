@@ -16,6 +16,6 @@ DIAG(err_empty_program, Error, "Program is empty")
 DIAG(err_empty_begin, Error, "Begin must contain at least one expression")
 DIAG(err_internal_compiler, Error, "Internal compiler error: {0}")
 DIAG(err_set_undefined, Error, "Cannot set! undefined variable '{0}'")
-
+DIAG(err_cannot_infer_type, Error, "Cannot infer type for '{0}'")
 
 #undef DIAG

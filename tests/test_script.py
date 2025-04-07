@@ -7,6 +7,7 @@ parser = argparse.ArgumentParser(description="Run tests for llracket.")
 parser.add_argument("--llracket", required=True, help="Path to the llracket binary.")
 parser.add_argument("--runtime", required=True, help="Path to the runtime.c file.")
 parser.add_argument("--build-dir", required=True, help="Path to the build directory.")
+parser.add_argument("--single-test", help="Path to a single test file to run.", default=None)
 args = parser.parse_args()
 
 
@@ -29,7 +30,7 @@ def run_test(
     # Step 1: Run llracket to generate the .ll file
     result = subprocess.run(
         [args.llracket, test_program, "-o", ll_file],
-        capture_output=True,
+        capture_output=True if quiet else False,
         text=True,
     )
     if result.returncode != 0:
@@ -49,7 +50,7 @@ def run_test(
     # Step 2: Run llc to generate the .s file
     result = subprocess.run(
         ["llc", "-relocation-model=pic", "-o", s_file, ll_file],
-        capture_output=True,
+        capture_output=True if quiet else False,
         text=True,
     )
     if result.returncode != 0:
@@ -60,7 +61,7 @@ def run_test(
     # Step 3: Run clang to generate the executable
     result = subprocess.run(
         ["clang", "-o", executable, s_file, args.runtime],
-        capture_output=True,
+        capture_output=True if quiet else False,
         text=True,
     )
     if result.returncode != 0:
@@ -73,7 +74,7 @@ def run_test(
         [executable],
         input=test_input,
         encoding="ascii",
-        capture_output=True,
+        capture_output=True if quiet else False,
         text=True,
     )
     if result.returncode != 0:
@@ -84,7 +85,7 @@ def run_test(
     # Step 5: Compare the output with the expected output
     expected_output = test_output
 
-    if result.stdout.strip() != expected_output.strip():
+    if quiet and result.stdout.strip() != expected_output.strip():
         print(f"❌ Test failed: {test_name}")
         print("Expected output:")
         print(expected_output)
@@ -93,17 +94,54 @@ def run_test(
         return False
 
     # If everything matches, the test passes
-    if not quiet:
-        print(f"✅ Test passed: {test_name}")
+    # if not quiet:
+    #     print(f"✅ Test passed: {test_name}")
     return True
 
 
 def main():
     source_test_dir = os.path.dirname(__file__)
     build_test_dir = os.path.join(args.build_dir, "tests")
-
     os.makedirs(build_test_dir, exist_ok=True)
 
+    print(f"Running single test: {args.single_test}")
+    # If running a single test file
+    if args.single_test:
+        if not os.path.exists(args.single_test):
+            print(f"Error: Test file {args.single_test} does not exist.")
+            return
+        
+        test_program = args.single_test
+        test_input_file = test_program.replace(".rkt", ".rkt.in")
+        test_output_file = test_program.replace(".rkt", ".rkt.out")
+        err_file = test_program.replace(".rkt", ".rkt.err")
+        
+        test_input = ""
+        test_output = ""
+        expect_compile_error = False
+        
+        if os.path.exists(test_input_file):
+            with open(test_input_file, 'r') as f:
+                test_input = f.read()
+        
+        if os.path.exists(test_output_file):
+            with open(test_output_file, 'r') as f:
+                test_output = f.read()
+        
+        if os.path.exists(err_file):
+            expect_compile_error = True
+        
+        run_test(
+            test_program,
+            test_input,
+            test_output,
+            expect_compile_error,
+            build_test_dir,
+            quiet=False
+        )
+        return
+
+    # Regular test run - all tests
     total_tests = 0
     passed_tests = 0
 

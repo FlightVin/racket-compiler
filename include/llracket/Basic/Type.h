@@ -12,7 +12,8 @@ enum class ExprType {
   Integer, ///< Represents the integer type.
   Boolean, ///< Represents the boolean type (#t, #f).
   Void,    ///< Represents the void type (result of set!, while, etc.).
-  Error    ///< Represents a type error or an unknown/uninferrable type.
+  Error,    ///< Represents a type error or an unknown/uninferrable type.
+  NeedsInference ///< Represents a type that needs to be inferred.
 };
 
 /**
@@ -27,6 +28,7 @@ inline const char* getTypeName(ExprType T) {
     case ExprType::Boolean: return "Boolean";
     case ExprType::Void:    return "Void";
     case ExprType::Error:   return "Error";
+    case ExprType::NeedsInference: return "NeedsInference";
     // default:                return "<UnknownType>"; // Should not happen
   }
   llvm_unreachable("Invalid ExprType enum value");

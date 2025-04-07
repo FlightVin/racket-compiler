@@ -106,6 +106,43 @@ public:
   // Indicates if an error was detected by this visitor specifically
   bool hasError() const { return HasError; }
 
+  // Check for any remaining NeedsInference types that weren't resolved
+  bool checkUnresolvedTypes() {
+    bool foundUnresolved = false;
+    for (auto &entry : ExprTypes) {
+      if (entry.second == ExprType::NeedsInference) {
+        // Get a string representation of the node for the error message
+        std::string nodeDesc;
+        if (Expr *expr = entry.first) {
+          // Try to get a meaningful description based on expression type
+          if (auto *prim = llvm::dyn_cast<Prim>(expr)) {
+            nodeDesc = "primitive operation '" + std::string(tok::getTokenName(prim->getOp())) + "'";
+          } else if (auto *var = llvm::dyn_cast<Var>(expr)) {
+            nodeDesc = "variable '" + var->getName().str() + "'";
+          } else {
+            // Generic fallback
+            nodeDesc = "expression";
+          }
+        } else {
+          nodeDesc = "unknown expression";
+        }
+
+        // Report the error
+        reportError(getLoc(entry.first), diag::err_cannot_infer_type, nodeDesc);
+        foundUnresolved = true;
+        
+        // Mark as error type now that we've reported it
+        entry.second = ExprType::Error;
+      }
+    }
+    
+    if (foundUnresolved) {
+      HasError = true;
+    }
+    
+    return !foundUnresolved;
+  }
+
   // --- Visitor Methods Implementation ---
 
   virtual void visit(Program &Node) override {
@@ -166,12 +203,29 @@ public:
   // --- Visit methods involving scope or complex logic ---
   virtual void visit(Let &Node) override {
     ExprType bindingType = ExprType::Error; // Default to error
+    printf("Visiting Let: %s\n", Node.getVar().str().c_str());
     if (Node.getBinding()) {
         bindingType = visitAndGetType(Node.getBinding());
+    
+        // Special case: direct (read) in let binding
+        if (bindingType == ExprType::NeedsInference && llvm::isa<Prim>(Node.getBinding())) {
+            auto *primExpr = llvm::cast<Prim>(Node.getBinding());
+            if (primExpr->getOp() == tok::read && !primExpr->getE1() && !primExpr->getE2()) {
+                // Direct assignment of (read) in let binding - force Integer type
+                bindingType = ExprType::Integer;
+                // Update the recorded type for the read expression
+                recordType(primExpr, ExprType::Integer);
+            } else {
+                // Non-direct case, can't infer from binding
+                reportError(getLoc(&Node), diag::err_cannot_infer_type, 
+                        "Cannot infer type for variable '" + Node.getVar().str() + 
+                        "' from binding expression");
+                bindingType = ExprType::Error;
+            }   
+        }
     } else {
         // Parser should ideally prevent null binding, but handle defensively
         reportError(getLoc(&Node), diag::err_internal_compiler, "Let binding expression is null");
-        // HasError set by reportError
     }
 
     ExprType bodyType = ExprType::Error; // Default to error
@@ -261,18 +315,33 @@ public:
         if (E1 || E2) { // read takes no arguments
             reportOperandCountError(0);
         } else {
-            // 'read' always yields an Integer in this language subset.
-            resultType = ExprType::Integer;
+            // Initially mark as NeedsInference for other contexts to resolve
+            resultType = ExprType::NeedsInference;
         }
         break;
 
       case tok::plus:
       case tok::minus: // Handles both binary and unary minus below
         if (E1 && E2) { // Binary +/-
+          // If either operand needs inference, record it as Integer
+          if (T1 == ExprType::NeedsInference) {
+            recordType(E1, ExprType::Integer);
+            T1 = ExprType::Integer;
+          }
+          if (T2 == ExprType::NeedsInference) {
+            recordType(E2, ExprType::Integer);
+            T2 = ExprType::Integer;
+          }
+
           if (T1 != ExprType::Integer) { reportExpectedTypeError(getLoc(E1), ExprType::Integer, T1, "for left operand of +/-"); OpError = true; }
           if (T2 != ExprType::Integer) { reportExpectedTypeError(getLoc(E2), ExprType::Integer, T2, "for right operand of +/-"); OpError = true; }
           if (!OpError) resultType = ExprType::Integer;
         } else if (E1 && !E2 && Node.getOp() == tok::minus) { // Unary minus
+           // If operand needs inference, record it as Integer
+           if (T1 == ExprType::NeedsInference) {
+            recordType(E1, ExprType::Integer);
+            T1 = ExprType::Integer;
+           }
            if (T1 != ExprType::Integer) { reportExpectedTypeError(getLoc(E1), ExprType::Integer, T1, "for operand of unary -"); OpError = true; }
            if (!OpError) resultType = ExprType::Integer;
         } else { // Wrong number of operands
@@ -282,6 +351,15 @@ public:
 
       case tok::lt: case tok::le: case tok::gt: case tok::ge:
         if (E1 && E2) {
+          // If either operand needs inference, record it as Integer
+          if (T1 == ExprType::NeedsInference) {
+            recordType(E1, ExprType::Integer);
+            T1 = ExprType::Integer;
+          }
+          if (T2 == ExprType::NeedsInference) {
+            recordType(E2, ExprType::Integer);
+            T2 = ExprType::Integer;
+          }
           if (T1 != ExprType::Integer) { reportExpectedTypeError(getLoc(E1), ExprType::Integer, T1, "for left operand of comparison"); OpError = true; }
           if (T2 != ExprType::Integer) { reportExpectedTypeError(getLoc(E2), ExprType::Integer, T2, "for right operand of comparison"); OpError = true; }
           if (!OpError) resultType = ExprType::Boolean;
@@ -291,28 +369,66 @@ public:
         break;
 
       case tok::eq:
-        if (E1 && E2) {
-          // Check for type consistency: both Integer or both Boolean
-          if (T1 != T2) {
-               // Report mismatch on second operand's location (or Node's location if E2 is null?)
-               reportTypeError(getLoc(E2 ? E2 : &Node), T1, T2, "in 'eq?' comparison");
-               OpError = true;
-          } else if (T1 != ExprType::Integer && T1 != ExprType::Boolean) {
-              // If they are the same, check if the type is valid for eq?
-              // Report error on first operand's location (or Node's location)
-              reportExpectedTypeError(getLoc(E1 ? E1 : &Node), ExprType::Integer /*or Boolean*/, T1,
-                    "for 'eq?' operands (must be Integer or Boolean)");
-              OpError = true;
-          }
-          // If no error occurred, result is Boolean
-          if (!OpError) resultType = ExprType::Boolean;
-        } else {
-             reportOperandCountError(2);
+       if (E1 && E2) {
+        // If both operands need inference, we can't determine the type
+        if (T1 == ExprType::NeedsInference && T2 == ExprType::NeedsInference) {
+          reportError(getLoc(&Node), diag::err_cannot_infer_type, "Cannot infer types for both operands of 'eq?'");
+          OpError = true;
         }
-        break;
+        // If one operand needs inference, infer it from the other
+        else if (T1 == ExprType::NeedsInference) {
+          if (T2 == ExprType::Integer || T2 == ExprType::Boolean) {
+            recordType(E1, T2);
+            // llvm::outs() << "Inferred type for first operand of eq? as " << getTypeName(T2) << "\n";
+            T1 = T2;
+          } else {
+            reportExpectedTypeError(getLoc(E2), ExprType::Integer /*or Boolean*/, T2,
+                                 "for 'eq?' (must be Integer or Boolean)");
+            OpError = true;
+          }
+        }
+        else if (T2 == ExprType::NeedsInference) {
+          if (T1 == ExprType::Integer || T1 == ExprType::Boolean) {
+            recordType(E2, T1);
+            T2 = T1;
+          } else {
+            reportExpectedTypeError(getLoc(E1), ExprType::Integer /*or Boolean*/, T1,
+                                 "for 'eq?' (must be Integer or Boolean)");
+            OpError = true;
+          }
+        }
+        
+        // Check for type consistency: both Integer or both Boolean
+        if (!OpError && T1 != T2) {
+          // Report mismatch on second operand's location
+          reportTypeError(getLoc(E2 ? E2 : &Node), T1, T2, "in 'eq?' comparison");
+          OpError = true;
+        } else if (!OpError && T1 != ExprType::Integer && T1 != ExprType::Boolean) {
+          // If they are the same, check if the type is valid for eq?
+          reportExpectedTypeError(getLoc(E1 ? E1 : &Node), ExprType::Integer /*or Boolean*/, T1,
+                              "for 'eq?' operands (must be Integer or Boolean)");
+          OpError = true;
+        }
+        
+        // If no error occurred, result is Boolean
+        if (!OpError) resultType = ExprType::Boolean;
+      } else {
+        reportOperandCountError(2);
+      }
+      break;
 
       case tok::and_: case tok::or_:
         if (E1 && E2) {
+          // If either operand needs inference, infer it to be Boolean
+          if (T1 == ExprType::NeedsInference) {
+            recordType(E1, ExprType::Boolean);
+            T1 = ExprType::Boolean;
+          }
+          if (T2 == ExprType::NeedsInference) {
+            recordType(E2, ExprType::Boolean);
+            T2 = ExprType::Boolean;
+          }
+
           if (T1 != ExprType::Boolean) { reportExpectedTypeError(getLoc(E1), ExprType::Boolean, T1, "for left operand of 'and'/'or'"); OpError = true; }
           if (T2 != ExprType::Boolean) { reportExpectedTypeError(getLoc(E2), ExprType::Boolean, T2, "for right operand of 'and'/'or'"); OpError = true; }
           if (!OpError) resultType = ExprType::Boolean;
@@ -323,6 +439,11 @@ public:
 
       case tok::not_:
         if (E1 && !E2) {
+           // If operand needs inference, infer it to be Boolean
+           if (T1 == ExprType::NeedsInference) {
+            recordType(E1, ExprType::Boolean);
+            T1 = ExprType::Boolean;
+           }
            if (T1 != ExprType::Boolean) { reportExpectedTypeError(getLoc(E1), ExprType::Boolean, T1, "for operand of 'not'"); OpError = true; }
            if (!OpError) resultType = ExprType::Boolean;
         } else {
@@ -350,6 +471,12 @@ public:
     ExprType condType = ExprType::Error;
     if (Node.getCondition()) {
         condType = visitAndGetType(Node.getCondition());
+
+        // If condition needs inference, infer it as Boolean
+        if (condType == ExprType::NeedsInference) {
+            recordType(Node.getCondition(), ExprType::Boolean);
+            condType = ExprType::Boolean;
+        }
     } else {
         reportError(getLoc(&Node), diag::err_internal_compiler, "If condition is null");
     }
@@ -366,6 +493,22 @@ public:
         elseType = visitAndGetType(Node.getElseExpr());
     } else {
         reportError(getLoc(&Node), diag::err_internal_compiler, "If 'else' branch is null");
+    }
+
+    // Handle NeedsInference in branches
+    if (thenType == ExprType::NeedsInference && elseType != ExprType::NeedsInference) {
+        // Infer then branch from else branch
+        recordType(Node.getThenExpr(), elseType);
+        thenType = elseType;
+    } else if (elseType == ExprType::NeedsInference && thenType != ExprType::NeedsInference) {
+        // Infer else branch from then branch
+        recordType(Node.getElseExpr(), thenType);
+        elseType = thenType;
+    } else if (thenType == ExprType::NeedsInference && elseType == ExprType::NeedsInference) {
+        // Can't infer types for both branches
+        reportError(getLoc(&Node), diag::err_cannot_infer_type, 
+                "Cannot infer types for both branches of 'if'");
+        thenType = elseType = ExprType::Error;
     }
 
     ExprType resultType = ExprType::Error; // Default to error
@@ -430,9 +573,14 @@ public:
      } else {
          varType = it->getValue();
          ExprType valueType = ExprType::Error; // Default if valueExpr is null
-
          if (Node.getValueExpr()) {
             valueType = visitAndGetType(Node.getValueExpr());
+
+            // If value expression needs inference, infer it from the variable type
+            if (valueType == ExprType::NeedsInference) {
+                recordType(Node.getValueExpr(), varType);
+                valueType = varType;
+            }
          } else {
             // Parser should prevent this. Report internal error.
             reportError(getLoc(&Node), diag::err_internal_compiler, "set! missing value expression");
@@ -501,6 +649,14 @@ public:
     ExprType condType = ExprType::Error;
     if (Node.getCondition()) {
         condType = visitAndGetType(Node.getCondition());
+
+        // If condition needs inference, infer it as Boolean
+        if (condType == ExprType::NeedsInference) {
+            // llvm::outs() << "In while loop, inferring condition type as Boolean\n";
+            recordType(Node.getCondition(), ExprType::Boolean);
+            condType = ExprType::Boolean;
+        }
+        
     } else {
         reportError(getLoc(&Node), diag::err_internal_compiler, "While condition is null");
     }
@@ -522,7 +678,7 @@ public:
           condError = true; // Error specifically in condition type
        }
     } else {
-        condError = true; // Condition expression itself had an error
+        condError = true; // Condition expression itself had an errodr
     }
 
 
@@ -552,6 +708,9 @@ bool Sema::typeCheck(AST *Tree) {
   // Construct visitor with DiagnosticsEngine reference
   TypeCheckVisitor Checker(Diags, ExprTypes, CurrentVarTypes);
   Tree->accept(Checker);
+  
+  // After visiting all nodes, check for any remaining unresolved types
+  Checker.checkUnresolvedTypes();
 
   // Check both the visitor's internal flag and the diagnostics engine count.
   // This catches errors reported directly via Diags AND internal logic errors flagged by Checker.hasError().
