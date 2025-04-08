@@ -4,6 +4,7 @@ The LLRacket compiler employs a static type checking system implemented primaril
 
 *   **Determine the static type** of every expression (`Expr`) node in the AST.
 *   **Verify type consistency** according to the language rules (e.g., operands of `+` must be integers, condition of `if` must be boolean).
+*   **Attempt type inference** where types are not immediately explicit (primarily involving `(read)`).
 *   **Report type errors** clearly to the user using the `DiagnosticsEngine`.
 *   **Store the determined types** so the `CodeGen` phase can use them to generate type-correct LLVM Intermediate Representation (IR).
 
@@ -13,8 +14,9 @@ The foundation is a simple enumeration `ExprType` defining the possible static t
 
 *   `ExprType::Integer`: Represents integer values.
 *   `ExprType::Boolean`: Represents boolean values (`#t`, `#f`).
-*   `ExprType::Void`: Represents expressions that produce no value (like `set!`, `while`, `(void)`).
-*   `ExprType::Error`: A special type assigned when a type error is detected or a type cannot be determined. This helps prevent cascading errors and signals issues to later phases.
+*   `ExprType::Void`: Represents expressions that produce no value (like `set!`, `while`, `(void)`, `begin` with no final value).
+*   `ExprType::NeedsInference`: A temporary type assigned to expressions (currently only `(read)`) whose final type depends on the context in which they are used.
+*   `ExprType::Error`: A special type assigned when a type error is detected or a type cannot be determined (e.g., undefined variable, failed inference). This helps prevent cascading errors and signals issues to later phases.
 
 A helper function `getTypeName` converts these enum values into human-readable strings for error messages.
 
@@ -27,61 +29,64 @@ A helper function `getTypeName` converts these enum values into human-readable s
     *   The main entry point is `typeCheck(AST *Tree)`, which returns `true` on success (no errors) and `false` otherwise.
 
 *   **`TypeCheckVisitor` Class (`lib/Sema/Sema.cpp`):** The actual type checking logic is implemented using the Visitor pattern within this internal class.
-    *   It traverses the AST recursively.
+    *   It traverses the AST recursively using a helper `visitAndGetType`.
     *   It inherits from `ASTVisitor` and overrides the `visit` method for each specific AST node type (`Int`, `Bool`, `Var`, `Let`, `Prim`, `If`, `SetBang`, `Begin`, `WhileLoop`, `Void`, etc.).
     *   It uses the `ExprTypes` map (passed by reference from `Sema`) to store the type it determines for each node it visits.
     *   It uses the `CurrentVarTypes` map (also passed by reference) to resolve variable types and manage scopes (especially for `Let`).
+    *   It implements type inference logic, resolving `NeedsInference` based on context.
     *   It has helper methods (`recordType`, `reportTypeError`, `reportExpectedTypeError`, `reportError`) to store types and report errors via the `Diags` engine.
     *   A `HasError` flag tracks if any error occurred during the visitor's traversal.
+    *   After traversal, it performs a final check (`checkUnresolvedTypes`) for any `NeedsInference` types that couldn't be resolved, reporting them as errors.
 
-**4. Type Checking and Assignment Rules (Inside `TypeCheckVisitor`)**
+**4. Type Inference**
 
-The `visit` method for each `Expr` subtype implements the specific type rules:
+Because the `(read)` expression can conceptually return either an `Integer` or a `Boolean` depending on runtime input (and the type flag passed to the runtime `read_value` function), its static type must be inferred from the context where it's used.
 
-*   **Literals (`visit(Int &)`, `visit(Bool &)`, `visit(Void &)`):** These are the base cases. They simply record their inherent type (`Integer`, `Boolean`, `Void`) in the `ExprTypes` map.
-*   **Variables (`visit(Var &)`):**
-    *   Looks up the variable's name (`Node.getName()`) in the `CurrentVarTypes` map.
-    *   If found, it records the retrieved type for the `Var` node.
-    *   If not found, it reports an `err_undefined_variable` and records `ExprType::Error`.
+*   **Initial Assignment:** When the `TypeCheckVisitor` encounters a `Prim` node representing `(read)`, it initially assigns it the type `ExprType::NeedsInference`.
+*   **Contextual Resolution:** This `NeedsInference` type is resolved (changed to `Integer`, `Boolean`, or `Error`) when visiting the *parent* expression that uses the `(read)` result:
+    *   **`let` Binding (`visit(Let &)`):** If `exp1` in `(let ([x exp1]) ...)` is `(read)`, the spec *guarantees* the input will be an integer. The visitor forces the type of `exp1` (and thus `x`) to `ExprType::Integer`. If `exp1` yields `NeedsInference` but isn't `(read)`, it's an error.
+    *   **`if`/`while` Condition (`visit(If &)`, `visit(WhileLoop &)`):** If the condition expression evaluates to `NeedsInference`, it's inferred to be `ExprType::Boolean`.
+    *   **Arithmetic/Comparison Operands (`visit(Prim &)` for `+`, `-`, `<`, `<=`, `>`, `>=`):** If an operand has type `NeedsInference`, it's inferred to be `ExprType::Integer`.
+    *   **`eq?` Operands (`visit(Prim &)`):** If one operand is `NeedsInference` and the other is `Integer` or `Boolean`, the `NeedsInference` operand is inferred to match. If both are `NeedsInference`, an error (`err_cannot_infer_type`) is reported.
+    *   **Logical Operands (`visit(Prim &)` for `and`, `or`, `not`):** If an operand is `NeedsInference`, it's inferred to be `ExprType::Boolean`.
+    *   **`set!` Value (`visit(SetBang &)`):** If the value expression yields `NeedsInference`, its type is inferred from the already-known type of the variable being assigned to.
+*   **Final Check:** If, after checking the entire AST, any expression still has the type `NeedsInference`, it means the context was insufficient to determine the type, and an `err_cannot_infer_type` error is reported.
+
+**5. Type Checking and Assignment Rules (Inside `TypeCheckVisitor`)**
+
+The `visit` method for each `Expr` subtype implements the specific type rules, incorporating inference:
+
+*   **Literals (`visit(Int &)`, `visit(Bool &)`, `visit(Void &)`):** Assign their inherent types (`Integer`, `Boolean`, `Void`).
+*   **Variables (`visit(Var &)`):** Looks up type in `CurrentVarTypes`. Reports `err_undefined_variable` or assigns the found type.
 *   **Let Expressions (`visit(Let &)`):**
-    *   Recursively determines the type of the `Binding` expression.
-    *   **Scope Management:** Saves the current type (if any) associated with `VarName` in `CurrentVarTypes`.
-    *   Updates `CurrentVarTypes` by mapping `VarName` to the `Binding`'s type (if it wasn't `Error`).
-    *   Recursively determines the type of the `Body` expression within this new scope.
-    *   **Scope Restoration:** Restores the original type mapping for `VarName` in `CurrentVarTypes`.
-    *   The type of the `Let` expression itself is the type of its `Body`. If the `Binding` had an error, the `Let`'s type is `Error`. Records this result.
+    *   Determines/infers binding type (handling `(read)` as `Integer`).
+    *   Updates scope, determines body type, restores scope.
+    *   Result type is the body's type (or `Error`).
 *   **Primitives (`visit(Prim &)`):**
-    *   Recursively determines the types of operands (`E1`, `E2` if present).
-    *   Checks if operand types match the requirements of the operator (`Op`):
-        *   `+`, `-` (unary/binary): Expect `Integer`, result `Integer`. Reports `err_expected_type` on mismatch.
-        *   Comparisons (`<`, `<=`, `>`, `>=`): Expect `Integer`, result `Boolean`. Reports `err_expected_type`.
-        *   `eq?`: Expects both operands to have the *same* type, which must be `Integer` or `Boolean`. Result `Boolean`. Reports `err_type_mismatch` or `err_expected_type`.
-        *   `not`: Expects `Boolean`, result `Boolean`. Reports `err_expected_type`.
-        *   `and`, `or`: Expects `Boolean`, result `Boolean`. Reports `err_expected_type`.
-        *   `read`: Takes no arguments, result `Integer`.
-    *   Checks for the correct number of operands using `reportOperandCountError`.
-    *   Records the calculated result type or `ExprType::Error` if any check fails.
+    *   Determines/infers operand types based on the operator.
+    *   Reports errors (`err_expected_type`, `err_type_mismatch`, `err_wrong_operand_count`) if checks fail after inference.
+    *   **(read):** Assigns `NeedsInference`.
+    *   `+`, `-`: Operands inferred/checked as `Integer`. Result `Integer`.
+    *   Comparisons: Operands inferred/checked as `Integer`. Result `Boolean`.
+    *   `eq?`: Operands inferred/checked to be identical `Integer` or `Boolean`. Result `Boolean`.
+    *   `not`, `and`, `or`: Operands inferred/checked as `Boolean`. Result `Boolean`.
+    *   Records result type or `Error`.
 *   **If Expressions (`visit(If &)`):**
-    *   Recursively determines the types of the `Condition`, `ThenExpr`, and `ElseExpr`.
-    *   Checks if the `Condition`'s type is `Boolean`. Reports `err_expected_type` if not.
-    *   Checks if the `ThenExpr`'s type and `ElseExpr`'s type are identical (and not `Error`). Reports `err_if_branch_mismatch` if they differ.
-    *   The type of the `If` expression is the common type of the branches *only if* the condition is `Boolean` and the branches match. Otherwise, the type is `ExprType::Error`. Records the result.
+    *   Infers/checks condition type is `Boolean`.
+    *   Infers/checks branch types are identical.
+    *   Result type is the common branch type (or `Error`).
 *   **Set! Expressions (`visit(SetBang &)`):**
-    *   Checks if the variable (`VarName`) exists in `CurrentVarTypes`. Reports `err_set_undefined` if not.
-    *   Recursively determines the type of the `ValueExpr`.
-    *   If the variable exists, checks if the `ValueExpr`'s type matches the variable's declared type (from `CurrentVarTypes`). Reports `err_type_mismatch` if not.
-    *   **Crucially, the result type of a `set!` expression is always `ExprType::Void`**, regardless of errors during analysis. Records `Void`.
+    *   Checks variable exists.
+    *   Determines/infers value type, matching it against the variable's type.
+    *   Result type is always `Void`.
 *   **Begin Expressions (`visit(Begin &)`):**
-    *   Recursively determines the type of each expression in the sequence.
-    *   Checks if the sequence is empty (`err_empty_begin`).
-    *   The type of the `Begin` expression is the type of the *last* expression in the sequence.
-    *   If any expression within the sequence results in `ExprType::Error`, the entire `Begin` expression's type becomes `ExprType::Error`. Records the result.
+    *   Determines type of each sub-expression.
+    *   Result type is the type of the *last* expression (or `Error` if any sub-expression had an error or `begin` was empty).
 *   **While Loops (`visit(WhileLoop &)`):**
-    *   Recursively determines the types of the `Condition` and `Body`.
-    *   Checks if the `Condition`'s type is `Boolean`. Reports `err_expected_type` if not.
-    *   **The result type of a `while` expression is always `ExprType::Void`**. Records `Void`.
+    *   Infers/checks condition type is `Boolean`.
+    *   Result type is always `Void`.
 
-**5. Storing and Using Type Information**
+**6. Storing and Using Type Information**
 
 *   After the `TypeCheckVisitor` finishes, the `Sema` object contains the populated `ExprTypes` map.
 *   The driver (`tools/driver/LLRacket.cpp`) retrieves this map using `Sema::getExprTypes()`.
@@ -91,8 +96,9 @@ The `visit` method for each `Expr` subtype implements the specific type rules:
     *   To generate the correct LLVM instructions based on operand types (e.g., `CreateNSWAdd` for integers, `CreateICmpSLT` for integer comparison, `CreateAnd` for booleans).
     *   To insert explicit casts (`CreateZExt`, `CreateSExt`, `CreateICmpNE`) when necessary (e.g., converting `i1` condition results for branching, converting between `i1` and `i32` if needed by runtime functions or assignment).
     *   To select the correct runtime function for printing (`write_int` vs `write_bool`).
+    *   To determine the correct type flag (0 or 1) to pass to the `read_value` runtime function based on the resolved type of the `(read)` expression.
     *   To handle `ExprType::Error` defensively, often generating default values (like 0 or `false`) or skipping code generation for the erroneous parts.
 
 **In Summary:**
 
-The type checking process is a systematic traversal of the AST using a visitor pattern. It applies specific rules based on the language constructs to determine the type of each expression. It maintains variable type information through a symbol table (`CurrentVarTypes`) respecting lexical scope (`let`). The results are stored in a map (`ExprTypes`) associating AST nodes with their static types. This map is then consumed by the code generator to produce type-correct LLVM IR. The `DiagnosticsEngine` is used throughout to report any inconsistencies or errors found.
+The type checking process is a systematic traversal of the AST using a visitor pattern. It applies specific rules based on the language constructs to determine the type of each expression, employing context-based **type inference** to resolve the ambiguous type of `(read)`. It maintains variable type information through a symbol table (`CurrentVarTypes`) respecting lexical scope (`let`). The results are stored in a map (`ExprTypes`) associating AST nodes with their static types. This map is then consumed by the code generator to produce type-correct LLVM IR. The `DiagnosticsEngine` is used throughout to report any inconsistencies or errors found.
