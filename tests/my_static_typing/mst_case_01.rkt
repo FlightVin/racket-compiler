@@ -1,0 +1,1 @@
+(eq? (read) (read))
