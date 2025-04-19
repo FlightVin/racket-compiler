@@ -1,4 +1,4 @@
-add_library(llracketBasic Diagnostic.cpp TokenKinds.cpp)
+add_library(llracketBasic Diagnostic.cpp TokenKinds.cpp Type.cpp)
 
 target_link_libraries(llracketBasic PRIVATE LLVMCore LLVMSupport)
 

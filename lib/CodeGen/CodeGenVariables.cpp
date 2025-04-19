@@ -1,6 +1,6 @@
-#include "CodeGenVisitor.h" // Include the visitor definition
+#include "CodeGenVisitor.h"
 #include "llracket/AST/AST.h"
-#include "llracket/Basic/Type.h"
+#include "llracket/Basic/Type.h" // Include new Type definitions
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/IRBuilder.h"
@@ -17,36 +17,45 @@ using namespace llracket::codegen;
 // --- Implementation of ToIRVisitor methods ---
 
 void ToIRVisitor::visit(Var &Node) {
-  // Access nameMap, Builder, ExprTypes, getLLVMType, V directly
+  // Access nameMap, Builder, ExprTypes, getLLVMType, V, Type singletons directly
   auto it = nameMap.find(Node.getName());
   if (it != nameMap.end()) {
       AllocaInst* Alloca = it->second;
       V = Builder.CreateLoad(Alloca->getAllocatedType(), Alloca, Node.getName());
   } else {
       llvm::errs() << "Codegen Error: Undefined variable '" << Node.getName() << "' encountered.\n";
-      ExprType ExpectedType = ExprTypes.count(&Node) ? ExprTypes.lookup(&Node) : ExprType::Error;
-      V = (getLLVMType(ExpectedType) == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+      // Attempt to get type from Sema, default to ErrorType if not found
+      Type* ExpectedType = ExprTypes.lookup(&Node);
+      if (!ExpectedType) ExpectedType = ErrorType::get();
+
+      llvm::Type* LLVMExpectedType = getLLVMType(ExpectedType); // MODIFIED: Use helper
+      V = llvm::Constant::getNullValue(LLVMExpectedType); // Use null value for error
+       // Example: V = (LLVMExpectedType == LLVMInt1Ty) ? (Value*)LLVMFalseConstant : (Value*)LLVMInt32Zero;
   }
 }
 
 void ToIRVisitor::visit(Let &Node) {
-    // Access ExprTypes, getLLVMType, Builder, V, nameMap directly
-    ExprType VarBindingType = ExprTypes.count(Node.getBinding()) ? ExprTypes.lookup(Node.getBinding()) : ExprType::Error;
-    if (VarBindingType == ExprType::Error) {
+    // Access ExprTypes, getLLVMType, Builder, V, nameMap, Type singletons directly
+    Type* VarBindingType = ExprTypes.lookup(Node.getBinding()); // Returns Type*
+    if (!VarBindingType || VarBindingType == ErrorType::get()) { // MODIFIED: Check null or ErrorType
         llvm::errs() << "Codegen Skipping Let due to binding type error for var: " << Node.getVar() << "\n";
-        ExprType LetResultType = ExprTypes.count(&Node) ? ExprTypes.lookup(&Node) : ExprType::Error;
-        V = (getLLVMType(LetResultType) == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+        Type* LetResultType = ExprTypes.lookup(&Node);
+        if (!LetResultType) LetResultType = ErrorType::get();
+        llvm::Type* LLVMResultType = getLLVMType(LetResultType);
+        V = llvm::Constant::getNullValue(LLVMResultType); // MODIFIED: Use null value
         return;
     }
-    Type *VarLLVMType = getLLVMType(VarBindingType);
+    llvm::Type *VarLLVMType = getLLVMType(VarBindingType); // MODIFIED: Use helper
 
     // Alloca Placement
     Function *TheFunction = Builder.GetInsertBlock()->getParent();
     BasicBlock* EntryBB = &TheFunction->getEntryBlock();
     if (!EntryBB) {
        llvm::errs() << "Codegen Error: Cannot find entry block for Alloca in Let.\n";
-       ExprType LetResultType = ExprTypes.count(&Node) ? ExprTypes.lookup(&Node) : ExprType::Error;
-       V = (getLLVMType(LetResultType) == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero; return;
+       Type* LetResultType = ExprTypes.lookup(&Node);
+       if (!LetResultType) LetResultType = ErrorType::get();
+       llvm::Type* LLVMResultType = getLLVMType(LetResultType);
+       V = llvm::Constant::getNullValue(LLVMResultType); return;
     }
     IRBuilder<> TmpBuilder(EntryBB, EntryBB->getFirstInsertionPt());
     AllocaInst *Alloca = TmpBuilder.CreateAlloca(VarLLVMType, nullptr, Node.getVar());
@@ -57,27 +66,28 @@ void ToIRVisitor::visit(Let &Node) {
 
      if (!BindingVal) {
         llvm::errs() << "Codegen Error: Null value produced for let binding '" << Node.getVar() << "'. Using default.\n";
-        BindingVal = (VarLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+        BindingVal = llvm::Constant::getNullValue(VarLLVMType);
     }
 
-    // Ensure type match, cast if necessary
+    // Ensure type match, cast if necessary (using LLVM types)
     if (BindingVal->getType() != VarLLVMType) {
          llvm::errs() << "Codegen Warning: Type mismatch for let binding '" << Node.getVar() << "'. Expected "
                       << *VarLLVMType << ", got " << *BindingVal->getType() << ". Attempting cast.\n";
-         if (VarLLVMType == Int32Ty && BindingVal->getType() == Int1Ty) {
-             BindingVal = Builder.CreateZExt(BindingVal, Int32Ty, "let.bind.cast");
-         } else if (VarLLVMType == Int1Ty && BindingVal->getType() == Int32Ty) {
-             BindingVal = Builder.CreateICmpNE(BindingVal, Int32Zero, "let.bind.cast");
-         } else {
+         if (VarLLVMType == LLVMInt32Ty && BindingVal->getType() == LLVMInt1Ty) {
+             BindingVal = Builder.CreateZExt(BindingVal, LLVMInt32Ty, "let.bind.cast");
+         } else if (VarLLVMType == LLVMInt1Ty && BindingVal->getType() == LLVMInt32Ty) {
+             BindingVal = Builder.CreateICmpNE(BindingVal, LLVMInt32Zero, "let.bind.cast");
+         } // Add more casts if needed (e.g., pointer types)
+         else {
               llvm::errs() << " -- Cannot cast binding value. Using default.\n";
-              BindingVal = (VarLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+              BindingVal = llvm::Constant::getNullValue(VarLLVMType);
          }
     }
 
     Builder.CreateStore(BindingVal, Alloca);
 
     // Scope Management
-    AllocaInst *OldValue = nameMap.lookup(Node.getVar()); // Use lookup
+    AllocaInst *OldValue = nameMap.lookup(Node.getVar());
     nameMap[Node.getVar()] = Alloca;
 
     // Evaluate body
@@ -90,40 +100,43 @@ void ToIRVisitor::visit(Let &Node) {
     else
         nameMap.erase(Node.getVar());
 
-    V = BodyValue;
+    V = BodyValue; // V is already set by the body visit
 }
 
 void ToIRVisitor::visit(SetBang &Node) {
-     // Access nameMap, Builder, V directly
+     // Access nameMap, Builder, V, Type singletons directly
      auto it = nameMap.find(Node.getVarName());
      if (it == nameMap.end()) {
          llvm::errs() << "Codegen Error: Variable " << Node.getVarName() << " not found for set!\n";
-         V = Int32Zero; return; // set! result is void
+         V = LLVMInt32Zero; // set! result is void (represented by i32 0)
+         return;
      }
      AllocaInst *VarLoc = it->second;
-     Type* VarLLVMType = VarLoc->getAllocatedType();
+     llvm::Type* VarLLVMType = VarLoc->getAllocatedType();
 
      Node.getValueExpr()->accept(*this);
      Value *ValToStore = V;
 
      if (!ValToStore) {
           llvm::errs() << "Codegen Error: Null value produced for set! assignment to '" << Node.getVarName() << "'.\n";
-          V = Int32Zero; return;
+          V = LLVMInt32Zero; return;
      }
 
-     // Ensure type match, casting if needed
+     // Ensure type match, casting if needed (using LLVM types)
      if (ValToStore->getType() != VarLLVMType) {
           llvm::errs() << "Codegen Warning: Type mismatch in set! for '" << Node.getVarName()
                        << "'. Expected " << *VarLLVMType << ", got " << *ValToStore->getType() << ". Casting.\n";
-          if (VarLLVMType == Int32Ty && ValToStore->getType() == Int1Ty) {
-              ValToStore = Builder.CreateZExt(ValToStore, Int32Ty, "set_cast");
-          } else if (VarLLVMType == Int1Ty && ValToStore->getType() == Int32Ty) {
-              ValToStore = Builder.CreateICmpNE(ValToStore, Int32Zero, "set_cast");
-          } else {
-               llvm::errs() << " -- Cannot cast for set!, skipping store.\n"; V = Int32Zero; return;
+          if (VarLLVMType == LLVMInt32Ty && ValToStore->getType() == LLVMInt1Ty) {
+              ValToStore = Builder.CreateZExt(ValToStore, LLVMInt32Ty, "set_cast");
+          } else if (VarLLVMType == LLVMInt1Ty && ValToStore->getType() == LLVMInt32Ty) {
+              ValToStore = Builder.CreateICmpNE(ValToStore, LLVMInt32Zero, "set_cast");
+          } // Add more casts if needed
+          else {
+               llvm::errs() << " -- Cannot cast for set!, skipping store.\n";
+               V = LLVMInt32Zero; return;
           }
      }
 
      Builder.CreateStore(ValToStore, VarLoc);
-     V = Int32Zero; // set! result is void
+     V = LLVMInt32Zero; // set! result is void
  }

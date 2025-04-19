@@ -1,17 +1,18 @@
 #include "llracket/CodeGen/CodeGen.h"
 #include "CodeGenVisitor.h" // Include the internal visitor definition
-#include "llracket/AST/AST.h" // Needed for llvm::cast in visit(Expr&)
+#include "llracket/AST/AST.h"
+#include "llracket/Basic/Type.h" // Include new Type definitions
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/IR/Instructions.h" // For ConstantInt, PointerType etc. in constructor
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/Support/Casting.h" // For llvm::cast
-#include "llvm/Support/ErrorHandling.h" // For llvm_unreachable
-#include "llvm/Support/raw_ostream.h" // For error reporting
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
-using namespace llracket; // Bring llracket namespace into scope
-using namespace llracket::codegen; // Bring codegen namespace into scope
+using namespace llracket;
+using namespace llracket::codegen;
 
 // --- CodeGen::compile method (Public Interface Implementation) ---
 void CodeGen::compile(AST *Tree) {
@@ -19,63 +20,78 @@ void CodeGen::compile(AST *Tree) {
       llvm::errs() << "Error: CodeGen called without type information map.\n";
       return;
   }
-  // Instantiate the internal visitor (now defined in CodeGenVisitor.h)
-  ToIRVisitor ToIR(M, *ExprTypes);
+  // Instantiate the internal visitor
+  // Get context directly from the module passed to CodeGen
+  ToIRVisitor ToIR(M, *ExprTypes); // Pass dereferenced map
   ToIR.run(Tree); // Execute the compilation process
 
   // Verify the entire module at the end
   if (verifyModule(*M, &errs())) {
        llvm::errs() << "LLVM Module verification failed after CodeGen.\n";
-       // M->dump(); // Optional: Dump module on verification failure
   }
 }
 
 // --- ToIRVisitor Constructor Implementation ---
-ToIRVisitor::ToIRVisitor(Module *Mod, const llvm::DenseMap<Expr *, ExprType> &Types)
+ToIRVisitor::ToIRVisitor(Module *Mod, const llvm::DenseMap<Expr *, Type*> &Types) // MODIFIED
     : M(Mod), Builder(Mod->getContext()), Ctx(Mod->getContext()), ExprTypes(Types) {
-  // Type initializations
-  VoidTy = llvm::Type::getVoidTy(Ctx);
-  Int32Ty = llvm::Type::getInt32Ty(Ctx);
-  Int1Ty = llvm::Type::getInt1Ty(Ctx);
-  Int32PtrTy = llvm::PointerType::get(Int32Ty, 0);
-  Int1PtrTy = llvm::PointerType::get(Int1Ty, 0);
-  Int32Zero = llvm::ConstantInt::get(Int32Ty, 0, true);
-  Int32One = llvm::ConstantInt::get(Int32Ty, 1, true);
-  TrueConstant = llvm::ConstantInt::get(Int1Ty, 1, false);
-  FalseConstant = llvm::ConstantInt::get(Int1Ty, 0, false);
+  // LLVM Type initializations (using distinct names)
+  LLVMVoidTy = llvm::Type::getVoidTy(Ctx);
+  LLVMInt32Ty = llvm::Type::getInt32Ty(Ctx);
+  LLVMInt1Ty = llvm::Type::getInt1Ty(Ctx);
+  LLVMInt32PtrTy = llvm::PointerType::getUnqual(LLVMInt32Ty);
+  LLVMInt1PtrTy = llvm::PointerType::getUnqual(LLVMInt1Ty);
+  // Assume vectors are pointers to i64 (tag or element)
+  LLVMInt64PtrTy = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(Ctx));
+
+
+  // LLVM Constant initializations (using distinct names)
+  LLVMInt32Zero = llvm::ConstantInt::get(LLVMInt32Ty, 0, true);
+  LLVMInt32One = llvm::ConstantInt::get(LLVMInt32Ty, 1, true);
+  LLVMTrueConstant = llvm::ConstantInt::get(LLVMInt1Ty, 1, false);
+  LLVMFalseConstant = llvm::ConstantInt::get(LLVMInt1Ty, 0, false);
 }
 
 
 // --- Helper Method Implementations ---
-llvm::Type* ToIRVisitor::getLLVMType(ExprType T) {
-    switch(T) {
-      case ExprType::Integer: return Int32Ty;
-      case ExprType::Boolean: return Int1Ty;
-      case ExprType::Void:    return Int32Ty; // Represent Void internally with i32
-      case ExprType::Error:
-      case ExprType::NeedsInference: // Should not happen in CodeGen
-        llvm::errs() << "Warning: Encountered Error/NeedsInference type during LLVM type lookup.\n";
-        return Int32Ty; // Defaulting to Int32
+// MODIFIED: Takes our Type*, returns llvm::Type*
+llvm::Type* ToIRVisitor::getLLVMType(Type* T) {
+    if (!T) {
+        llvm::errs() << "Warning: Null Type encountered during LLVM type lookup. Defaulting to Int32.\n";
+        return LLVMInt32Ty;
     }
-    llvm_unreachable("Invalid ExprType for getLLVMType");
+    switch(T->getKind()) {
+      case TypeKind::Integer: return LLVMInt32Ty; // Or Int64Ty if using 64-bit ints
+      case TypeKind::Boolean: return LLVMInt1Ty;
+      case TypeKind::Void:    return LLVMInt32Ty; // Represent Void internally with i32
+      case TypeKind::Vector:  return LLVMInt64PtrTy; // Vectors are pointers
+      case TypeKind::Error:
+        llvm::errs() << "Warning: Encountered Error type during LLVM type lookup. Defaulting to Int32.\n";
+        return LLVMInt32Ty;
+    }
+    llvm_unreachable("Invalid TypeKind for getLLVMType");
 }
 
-llvm::PointerType* ToIRVisitor::getLLVMPtrType(ExprType T) {
-     switch (T) {
-         case ExprType::Integer: return Int32PtrTy;
-         case ExprType::Boolean: return Int1PtrTy;
-         case ExprType::Void:    return Int32PtrTy; // Store void representation as i32*
-         case ExprType::Error:
-         case ExprType::NeedsInference: // Should not happen in CodeGen
-             llvm::errs() << "Warning: Error/NeedsInference type encountered for Alloca, defaulting to Int32*\n";
-             return Int32PtrTy;
+// MODIFIED: Takes our Type*, returns llvm::PointerType*
+llvm::PointerType* ToIRVisitor::getLLVMPtrType(Type* T) {
+     if (!T) {
+         llvm::errs() << "Warning: Null Type encountered for Alloca, defaulting to Int32*\n";
+         return LLVMInt32PtrTy;
      }
-     llvm_unreachable("Invalid ExprType for getLLVMPtrType");
+     switch (T->getKind()) {
+         case TypeKind::Integer: return LLVMInt32PtrTy; // Or Int64PtrTy
+         case TypeKind::Boolean: return LLVMInt1PtrTy;
+         case TypeKind::Void:    return LLVMInt32PtrTy; // Store void representation as i32*
+         case TypeKind::Vector:  return llvm::PointerType::getUnqual(LLVMInt64PtrTy); // Pointer to pointer for vectors
+         case TypeKind::Error:
+             llvm::errs() << "Warning: Error type encountered for Alloca, defaulting to Int32*\n";
+             return LLVMInt32PtrTy;
+     }
+     llvm_unreachable("Invalid TypeKind for getLLVMPtrType");
 }
 
 // --- Dispatcher Implementation ---
+// Needs update when VectorLiteral is added
 void ToIRVisitor::visit(Expr &Node) {
-    // This uses llvm::cast which requires the AST node definitions
     switch(Node.getKind()) {
         case Expr::ExprPrim:      llvm::cast<Prim>(Node).accept(*this); break;
         case Expr::ExprInt:       llvm::cast<Int>(Node).accept(*this); break;
@@ -87,6 +103,10 @@ void ToIRVisitor::visit(Expr &Node) {
         case Expr::ExprBegin:     llvm::cast<Begin>(Node).accept(*this); break;
         case Expr::ExprWhileLoop: llvm::cast<WhileLoop>(Node).accept(*this); break;
         case Expr::ExprVoid:      llvm::cast<Void>(Node).accept(*this); break;
-        // No default needed if all enum values are covered
+        // Add: case Expr::ExprVectorLiteral: llvm::cast<VectorLiteral>(Node).accept(*this); break;
+        // REMOVED: Default case as all enum values are handled.
     }
+    // If new ExprKinds are added without updating the switch, this will catch it at runtime.
+    // Consider adding an assertion or specific error reporting if necessary.
+    // llvm_unreachable("Unknown Expr Kind!"); // Optional: Use if certain all cases covered
 }

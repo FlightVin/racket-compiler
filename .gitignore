@@ -71,5 +71,5 @@ repomix*
 out.ll
 out.o
 out
-temp.txt
+temp.*
 create_tests.bash

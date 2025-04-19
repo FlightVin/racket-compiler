@@ -1,7 +1,7 @@
-#include "CodeGenVisitor.h" // Include the visitor definition
+#include "CodeGenVisitor.h"
 #include "llracket/AST/AST.h"
-#include "llracket/Basic/Type.h"
-#include "llracket/Lexer/Token.h" // Need TokenKind and getTokenName
+#include "llracket/Basic/Type.h" // Include new Type definitions
+#include "llracket/Lexer/Token.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -14,109 +14,140 @@
 using namespace llvm;
 using namespace llracket;
 using namespace llracket::codegen;
-// Explicitly bring TokenKind into scope if needed, or qualify uses
 using llracket::tok::TokenKind;
 
 // --- Implementation of ToIRVisitor methods ---
 
 void ToIRVisitor::visit(Prim &Node) {
-    // Access ExprTypes, getLLVMType, V, Builder, runtime getters directly
-    ExprType ResultType = ExprTypes.count(&Node) ? ExprTypes.lookup(&Node) : ExprType::Error;
-    if (ResultType == ExprType::Error) {
+    // Access ExprTypes, getLLVMType, V, Builder, runtime getters, Type singletons, LLVM constants directly
+    Type* ResultType = ExprTypes.lookup(&Node); // Get llracket::Type*
+    if (!ResultType || ResultType == ErrorType::get()) {
         llvm::errs() << "Codegen Skipping Prim due to type error for: " << tok::getTokenName(Node.getOp()) << "\n";
-        V = Int32Zero; return;
+        V = LLVMInt32Zero; // Default error value
+        if(ResultType){
+            llvm::Type* llvmT = getLLVMType(ResultType);
+            if(llvmT) V = llvm::Constant::getNullValue(llvmT);
+        }
+        return;
     }
-    Type* ResultLLVMType = getLLVMType(ResultType);
+    llvm::Type* ResultLLVMType = getLLVMType(ResultType); // Get llvm::Type*
 
     Value* E1V = nullptr;
     Value* E2V = nullptr;
 
+    // Evaluate operands first
     if (Node.getE1()) { Node.getE1()->accept(*this); E1V = V; }
     if (Node.getE2()) { Node.getE2()->accept(*this); E2V = V; }
 
-    // Check for null values from visits
+    // Check for null values from operand visits (indicates prior error)
     if ((Node.getE1() && !E1V) || (Node.getE2() && !E2V)) {
         llvm::errs() << "Codegen Error: Null value for operand in primitive " << tok::getTokenName(Node.getOp()) << "\n";
-        V = (ResultLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+        V = llvm::Constant::getNullValue(ResultLLVMType);
         return;
     }
 
-    // --- Operand Type Validation (Defensive) ---
-     switch (Node.getOp()) {
-        case TokenKind::plus:
-        case TokenKind::minus: // Handles both binary and unary below
-            if (E1V && E1V->getType() != Int32Ty) { llvm::errs() << "Codegen Type Error (+/- L): Expected i32, got " << *E1V->getType() << "\n"; V = Int32Zero; return; }
-            if (E2V && E2V->getType() != Int32Ty) { llvm::errs() << "Codegen Type Error (+/- R): Expected i32, got " << *E2V->getType() << "\n"; V = Int32Zero; return; }
-            break;
-        case TokenKind::lt: case TokenKind::le: case TokenKind::gt: case TokenKind::ge:
-            if (E1V && E1V->getType() != Int32Ty) { llvm::errs() << "Codegen Type Error (Comp L): Expected i32, got " << *E1V->getType() << "\n"; V = FalseConstant; return; }
-            if (E2V && E2V->getType() != Int32Ty) { llvm::errs() << "Codegen Type Error (Comp R): Expected i32, got " << *E2V->getType() << "\n"; V = FalseConstant; return; }
-            break;
-        case TokenKind::eq:
-            if (!E1V || !E2V || E1V->getType() != E2V->getType()) { llvm::errs() << "Codegen Type Error (eq?): Mismatched types " << (E1V ? *E1V->getType() : *VoidTy) << " vs " << (E2V ? *E2V->getType() : *VoidTy) << "\n"; V = FalseConstant; return; }
-            if (E1V->getType() != Int1Ty && E1V->getType() != Int32Ty) { llvm::errs() << "Codegen Type Error (eq?): Invalid type " << *E1V->getType() << "\n"; V = FalseConstant; return; }
-            break;
-        case TokenKind::and_: case TokenKind::or_:
-            if (E1V && E1V->getType() != Int1Ty) { llvm::errs() << "Codegen Type Error (and/or L): Expected i1, got " << *E1V->getType() << "\n"; V = FalseConstant; return; }
-            if (E2V && E2V->getType() != Int1Ty) { llvm::errs() << "Codegen Type Error (and/or R): Expected i1, got " << *E2V->getType() << "\n"; V = FalseConstant; return; }
-            break;
-        case TokenKind::not_:
-             if (E1V && E1V->getType() != Int1Ty) { llvm::errs() << "Codegen Type Error (not): Expected i1, got " << *E1V->getType() << "\n"; V = FalseConstant; return; }
-             break;
-        case TokenKind::read: break; // No operands
-        default:
-             llvm::errs() << "Codegen Error: Unhandled primitive op: " << tok::getTokenName(Node.getOp()) << "\n";
-             V = (ResultLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero; return;
-    }
-    // --- End Operand Type Validation ---
-
-
-    // Generate code based on op
+    // --- Generate code based on op ---
     switch (Node.getOp()) {
         case TokenKind::read: {
             Function* ReadValueFn = getOrDeclareReadValue();
-            int typeArgVal = (ResultType == ExprType::Boolean) ? 1 : 0;
-            Constant* typeArg = ConstantInt::get(Int32Ty, typeArgVal, true);
-            V = Builder.CreateCall(ReadValueFn, {typeArg}, "readval");
+            // *** FIX: Determine the type hint based on Sema's ResultType ***
+            int typeArgVal = 0; // Default to integer (0)
+            if (ResultType == BooleanType::get()) {
+                typeArgVal = 1; // Hint for Boolean (1)
+            } else if (ResultType != IntegerType::get()) {
+                // Should not happen if Sema is correct, but handle defensively
+                 llvm::errs() << "Codegen Internal Error: read expected Integer or Boolean type from Sema, got "
+                              << ResultType->getName() << "\n";
+                 // Keep typeArgVal as 0 (integer) to match runtime return type i32
+            }
 
-            // Convert read_value's i32 result if needed
-            if (ResultLLVMType == Int1Ty && V->getType() == Int32Ty) {
-                V = Builder.CreateICmpNE(V, Int32Zero, "read_bool_conv");
+            Constant* typeArg = ConstantInt::get(LLVMInt32Ty, typeArgVal, true);
+            V = Builder.CreateCall(ReadValueFn, {typeArg}, "readval"); // Returns i32 from runtime
+
+            // *** FIX: Convert runtime's i32 result to expected LLVM type (i1 for bool) ***
+            if (ResultLLVMType == LLVMInt1Ty && V->getType() == LLVMInt32Ty) {
+                // Convert the i32 returned by read_value (0 or 1) to i1
+                V = Builder.CreateICmpNE(V, LLVMInt32Zero, "read_bool_conv");
             } else if (V->getType() != ResultLLVMType) {
-                 llvm::errs() << "Codegen Internal Error: read_value call result type mismatch.\n";
-                 V = (ResultLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+                 // This might happen if ResultType was Integer but runtime returned i32 (which is ok)
+                 // Or if ResultType was something unexpected and didn't match i32
+                 if(ResultLLVMType == LLVMInt32Ty && V->getType() == LLVMInt32Ty) {
+                     // This is okay, types match.
+                 } else {
+                    llvm::errs() << "Codegen Internal Error: read_value call result (" << *V->getType()
+                                 << ") doesn't match expected LLVM type (" << *ResultLLVMType << ").\n";
+                    V = llvm::Constant::getNullValue(ResultLLVMType); // Use null for error propagation
+                 }
             }
             break;
         }
-        case TokenKind::plus: V = Builder.CreateNSWAdd(E1V, E2V, "addtmp"); break;
+        case TokenKind::plus:
+            if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (+ L): Expected i32.\n"; V = LLVMInt32Zero; return; }
+            if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (+ R): Expected i32.\n"; V = LLVMInt32Zero; return; }
+            V = Builder.CreateNSWAdd(E1V, E2V, "addtmp");
+            break;
         case TokenKind::minus:
-            if (E1V && E2V) V = Builder.CreateNSWSub(E1V, E2V, "subtmp"); // Binary
-            else if (E1V) V = Builder.CreateNSWNeg(E1V, "negtmp");      // Unary
-            else { llvm_unreachable("Invalid minus op state"); }
+            if (E1V && E2V) { // Binary
+                if (E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (- L): Expected i32.\n"; V = LLVMInt32Zero; return; }
+                if (E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (- R): Expected i32.\n"; V = LLVMInt32Zero; return; }
+                V = Builder.CreateNSWSub(E1V, E2V, "subtmp");
+            } else if (E1V) { // Unary
+                if (E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (unary -): Expected i32.\n"; V = LLVMInt32Zero; return; }
+                V = Builder.CreateNSWNeg(E1V, "negtmp");
+            } else {
+                 llvm_unreachable("Invalid minus op state in CodeGen");
+                 V = LLVMInt32Zero; return;
+            }
             break;
-        case TokenKind::lt: V = Builder.CreateICmpSLT(E1V, E2V, "lttmp"); break;
-        case TokenKind::le: V = Builder.CreateICmpSLE(E1V, E2V, "letmp"); break;
-        case TokenKind::gt: V = Builder.CreateICmpSGT(E1V, E2V, "gttmp"); break;
-        case TokenKind::ge: V = Builder.CreateICmpSGE(E1V, E2V, "getmp"); break;
-        case TokenKind::eq: V = Builder.CreateICmpEQ(E1V, E2V, "eqtmp"); break;
-        case TokenKind::and_: V = Builder.CreateAnd(E1V, E2V, "andtmp"); break;
-        case TokenKind::or_: V = Builder.CreateOr(E1V, E2V, "ortmp"); break;
-        case TokenKind::not_: V = Builder.CreateNot(E1V, "nottmp"); break;
+        case TokenKind::lt:
+            if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (< L): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (< R): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateICmpSLT(E1V, E2V, "lttmp"); break;
+        case TokenKind::le:
+            if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (<= L): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (<= R): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateICmpSLE(E1V, E2V, "letmp"); break;
+        case TokenKind::gt:
+            if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (> L): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (> R): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateICmpSGT(E1V, E2V, "gttmp"); break;
+        case TokenKind::ge:
+            if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (>= L): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (>= R): Expected i32.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateICmpSGE(E1V, E2V, "getmp"); break;
+        case TokenKind::eq:
+             if (!E1V || !E2V || E1V->getType() != E2V->getType()) { llvm::errs() << "Codegen Type Error (eq?): Mismatched or null LLVM types.\n"; V = LLVMFalseConstant; return; }
+             // Sema ensures operands are both Int or both Bool
+             // Corresponding LLVM types are i32 or i1
+             if (E1V->getType() != LLVMInt1Ty && E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (eq?): Invalid LLVM type " << *E1V->getType() << "\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateICmpEQ(E1V, E2V, "eqtmp"); break;
+        case TokenKind::and_:
+            if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and L): Expected i1.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and R): Expected i1.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateAnd(E1V, E2V, "andtmp"); break;
+        case TokenKind::or_:
+            if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (or L): Expected i1.\n"; V = LLVMFalseConstant; return; }
+            if (!E2V || E2V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (or R): Expected i1.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateOr(E1V, E2V, "ortmp"); break;
+        case TokenKind::not_:
+             if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (not): Expected i1.\n"; V = LLVMFalseConstant; return; }
+            V = Builder.CreateXor(E1V, LLVMTrueConstant, "nottmp"); // xor %val, true
+             break;
+
         default:
-            // Should not be reached due to earlier check
-            llvm_unreachable("Unhandled primitive op in generation phase");
-            break;
+             llvm::errs() << "Codegen Error: Unhandled primitive op: " << tok::getTokenName(Node.getOp()) << "\n";
+             V = llvm::Constant::getNullValue(ResultLLVMType); return;
     }
 
-    // Final defensive check on generated value type
+    // Final defensive check on generated value type (should be less needed for 'read' now)
     if (V && V->getType() != ResultLLVMType) {
          llvm::errs() << "Codegen Internal Warning: Post-op type mismatch for " << tok::getTokenName(Node.getOp())
                       << ". Generated: " << *V->getType() << ", Expected: " << *ResultLLVMType << ". Fixing.\n";
-         if (ResultLLVMType == Int32Ty && V->getType() == Int1Ty) V = Builder.CreateZExt(V, Int32Ty, "prim_fixup");
-         else if (ResultLLVMType == Int1Ty && V->getType() == Int32Ty) V = Builder.CreateICmpNE(V, Int32Zero, "prim_fixup");
-         else { llvm::errs() << " -- Cannot fixup.\n"; V = (ResultLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero; }
+         if (ResultLLVMType == LLVMInt32Ty && V->getType() == LLVMInt1Ty) V = Builder.CreateZExt(V, LLVMInt32Ty, "prim_fixup");
+         else if (ResultLLVMType == LLVMInt1Ty && V->getType() == LLVMInt32Ty) V = Builder.CreateICmpNE(V, LLVMInt32Zero, "prim_fixup");
+         else { llvm::errs() << " -- Cannot fixup.\n"; V = llvm::Constant::getNullValue(ResultLLVMType); }
     } else if (!V) {
          llvm::errs() << "Codegen Internal Error: Value V is null after primitive " << tok::getTokenName(Node.getOp()) << "\n";
-         V = (ResultLLVMType == Int1Ty) ? (Value*)FalseConstant : (Value*)Int32Zero;
+         V = llvm::Constant::getNullValue(ResultLLVMType);
     }
 }
