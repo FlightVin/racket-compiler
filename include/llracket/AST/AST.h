@@ -3,6 +3,7 @@
 
 #include "llracket/Lexer/Token.h"
 #include <any>
+#include <cassert> // For assert
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
 #include <vector>
@@ -21,13 +22,14 @@ class SetBang;
 class Begin;
 class WhileLoop;
 class Void;
+class VectorLiteral; // ADDED Forward declaration
 
 class ASTVisitor {
 public:
   virtual ~ASTVisitor() {}
   virtual void visit(Program &) {};
   virtual void visit(Expr &) {};
-  virtual void visit(Prim &) {};
+  virtual void visit(Prim &) = 0; // Now pure virtual as Prim handles more ops
   virtual void visit(Var &) = 0;
   virtual void visit(Let &) = 0;
   virtual void visit(Int &) = 0;
@@ -37,6 +39,7 @@ public:
   virtual void visit(Begin &) = 0;
   virtual void visit(WhileLoop &) = 0;
   virtual void visit(Void &) = 0;
+  virtual void visit(VectorLiteral &) = 0; // ADDED pure virtual visit method
 };
 
 class AST {
@@ -71,7 +74,8 @@ public:
     ExprSetBang,
     ExprBegin,
     ExprWhileLoop,
-    ExprVoid
+    ExprVoid,
+    ExprVectorLiteral // ADDED Kind for VectorLiteral
   };
 
 private:
@@ -82,23 +86,34 @@ public:
 
   ExprKind getKind() const { return Kind; }
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
-  // virtual void accept(ASTVisitor &V) override;
 };
 
+// Modified Prim to potentially handle a third argument for vector-set!
 class Prim : public Expr {
   TokenKind Op;
-  Expr *E1 = NULL;
-  Expr *E2 = NULL;
+  Expr *E1 = nullptr;
+  Expr *E2 = nullptr;
+  Expr *E3 = nullptr; // ADDED Third operand
 
 public:
+  // Constructors adjusted - provide default NULL for E3 initially
   Prim(TokenKind Op) : Expr(ExprPrim), Op(Op) {};
   Prim(TokenKind Op, Expr *E1) : Expr(ExprPrim), Op(Op), E1(E1) {};
   Prim(TokenKind Op, Expr *E1, Expr *E2)
       : Expr(ExprPrim), Op(Op), E1(E1), E2(E2) {};
+  // Constructor for three arguments (specifically for vector-set!)
+  Prim(TokenKind Op, Expr *E1, Expr *E2, Expr *E3)
+      : Expr(ExprPrim), Op(Op), E1(E1), E2(E2), E3(E3) {};
 
   TokenKind getOp() const { return Op; };
   Expr *getE1() const { return E1; };
   Expr *getE2() const { return E2; };
+  Expr *getE3() const {
+    // This check might be better placed in Sema/CodeGen visitors.
+    // assert((Op == tok::vector_setb) && "E3 accessed for non-ternary
+    // primitive!");
+    return E3;
+  };
 
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
@@ -224,4 +239,20 @@ public:
   static bool classof(const Expr *E) { return E->getKind() == ExprVoid; }
 };
 
-#endif
+// ADDED VectorLiteral class
+class VectorLiteral : public Expr {
+  std::vector<Expr *> Elements;
+
+public:
+  VectorLiteral(std::vector<Expr *> Elements)
+      : Expr(ExprVectorLiteral), Elements(std::move(Elements)) {}
+
+  const std::vector<Expr *> &getElements() const { return Elements; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprVectorLiteral;
+  }
+};
+
+#endif // LLRACKET_AST_AST_H

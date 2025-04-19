@@ -17,5 +17,8 @@ DIAG(err_empty_begin, Error, "Begin must contain at least one expression")
 DIAG(err_internal_compiler, Error, "Internal compiler error: {0}")
 DIAG(err_set_undefined, Error, "Cannot set! undefined variable '{0}'")
 DIAG(err_cannot_infer_type, Error, "Cannot infer type for '{0}'")
+DIAG(err_vector_non_int_index, Error, "Vector index must be an integer literal, but got {0}")
+DIAG(err_vector_index_out_of_bounds, Error, "Vector index {0} out of bounds for vector of size {1}")
+DIAG(err_vector_read_element, Error, "Vector element cannot be '(read)'")
 
 #undef DIAG

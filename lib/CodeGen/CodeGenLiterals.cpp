@@ -20,17 +20,28 @@ void ToIRVisitor::visit(Int &Node) {
                  << Node.getValue() << "\n";
     Intval = 0;
   }
-  // Access LLVMInt32Ty and V directly as members
-  V = ConstantInt::get(LLVMInt32Ty, Intval, true); // MODIFIED: Constant name
+  V = ConstantInt::get(LLVMInt32Ty, Intval, true);
 }
 
 void ToIRVisitor::visit(Bool &Node) {
-  // Access LLVMTrueConstant, LLVMFalseConstant, V directly
-  V = Node.getValue() ? LLVMTrueConstant
-                      : LLVMFalseConstant; // MODIFIED: Constant names
+  V = Node.getValue() ? LLVMTrueConstant : LLVMFalseConstant;
 }
 
-void ToIRVisitor::visit(Void &Node) {
-  // Access LLVMInt32Zero, V directly
-  V = LLVMInt32Zero; // MODIFIED: Constant name
+void ToIRVisitor::visit(Void &Node) { V = LLVMInt32Zero; }
+
+// ADDED Stub implementation for VectorLiteral
+void ToIRVisitor::visit(VectorLiteral &Node) {
+  // TODO: Implement code generation for vector literals
+  // 1. Get the VectorType* from ExprTypes map for this node
+  // 2. Calculate required size (tag + elements)
+  // 3. Generate call to runtime allocator (e.g., `runtime_allocate`)
+  // 4. Calculate and store the tag (encoding length, type info)
+  // 5. Recursively visit each element in Node.getElements()
+  // 6. Store each resulting llvm::Value* into the correct offset in the
+  // allocated memory
+  // 7. Set V to the pointer returned by the allocator
+  llvm::errs()
+      << "Codegen Warning: visit(VectorLiteral&) not implemented yet.\n";
+  // Return a null pointer of the expected type (i64*) as a placeholder
+  V = llvm::ConstantPointerNull::get(LLVMInt64PtrTy);
 }

@@ -15,8 +15,6 @@
 // Forward declarations from LLVM
 namespace llvm {
 class Value;
-// class Type; // llvm::Type conflicts with llracket::Type, use fully qualified
-// name
 class PointerType;
 class Constant;
 class Function;
@@ -96,8 +94,7 @@ public:
   virtual void visit(WhileLoop &Node) override;
   virtual void visit(Begin &Node) override;
   virtual void visit(Prim &Node) override;
-  // Add visit for VectorLiteral when defined
-  // virtual void visit(VectorLiteral &Node) override;
+  virtual void visit(VectorLiteral &Node) override; // ADDED Declaration
 };
 
 } // namespace codegen
