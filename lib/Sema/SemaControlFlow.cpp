@@ -158,44 +158,48 @@ void TypeCheckVisitor::visit(WhileLoop &Node) {
 }
 
 void TypeCheckVisitor::visit(Begin &Node) {
-  Type *resultType = VoidType::get();
+  Type* resultType = VoidType::get(); // Default if empty or all void
   const auto &exprs = Node.getExprs();
   bool subExprError = false;
 
   if (exprs.empty()) {
-    reportError(getLoc(&Node), diag::err_empty_begin);
-    resultType = ErrorType::get();
-    subExprError = true;
+     reportError(getLoc(&Node), diag::err_empty_begin);
+     resultType = ErrorType::get();
+     subExprError = true;
   } else {
-    for (size_t i = 0; i < exprs.size(); ++i) {
-      Expr *expr = exprs[i];
-      if (!expr) {
-        reportError(getLoc(&Node), diag::err_internal_compiler,
-                    "Null expression found in 'begin' block");
-        subExprError = true;
-        resultType = ErrorType::get();
-        continue;
-      }
-      Type *currentExprType = visitAndGetType(expr);
+     for (size_t i = 0; i < exprs.size(); ++i) {
+         Expr *expr = exprs[i];
+         if (!expr) {
+             reportError(getLoc(&Node), diag::err_internal_compiler, "Null expression found in 'begin' block");
+             subExprError = true;
+             resultType = ErrorType::get();
+             continue;
+         }
+         Type* currentExprType = visitAndGetType(expr);
 
-      if (!currentExprType || currentExprType == ErrorType::get()) {
-        subExprError = true;
-        // Assign error type to result if any sub-expression has error
-        resultType = ErrorType::get();
-      }
-      // The type of 'begin' is the type of the LAST expression visited *if no
-      // error occurred*
-      if (i == exprs.size() - 1 && !subExprError) {
-        resultType = currentExprType; // Use the type of the last expr
-      } else if (i == exprs.size() - 1 && subExprError) {
-        resultType =
-            ErrorType::get(); // Ensure result is Error if last expr errored
-      }
-    }
+         if (!currentExprType || currentExprType == ErrorType::get()) {
+             subExprError = true;
+             resultType = ErrorType::get(); // Propagate error
+             // Continue checking other expressions for more errors
+         }
+
+         // Handle the last expression
+         if (i == exprs.size() - 1) {
+             if (currentExprType == ReadPlaceholderType::get()) {
+                 // Cannot infer type if 'read' is the last expression of begin
+                 reportError(getLoc(expr), diag::err_cannot_infer_type,
+                              "last expression '(read)' in 'begin'");
+                 resultType = ErrorType::get();
+                 subExprError = true;
+             } else if (!subExprError) {
+                  // If no prior error, the result type is the type of the last expr
+                  resultType = currentExprType;
+             }
+             // If subExprError was already true, resultType remains ErrorType
+         }
+     }
   }
 
-  // If any sub-expression had an error, the final type is Error
-  recordType(&Node, subExprError
-                        ? ErrorType::get()
-                        : (resultType ? resultType : ErrorType::get()));
+  // Record the determined type (or ErrorType)
+  recordType(&Node, subExprError ? ErrorType::get() : (resultType ? resultType : ErrorType::get()));
 }

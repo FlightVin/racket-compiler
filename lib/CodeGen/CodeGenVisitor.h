@@ -15,8 +15,7 @@
 // Forward declarations from LLVM
 namespace llvm {
 class Value;
-// class Type; // llvm::Type conflicts with llracket::Type, use fully qualified
-// name
+class Type; // Keep forward declaration for llvm::Type
 class PointerType;
 class Constant;
 class Function;
@@ -42,6 +41,7 @@ class ToIRVisitor : public ASTVisitor {
   llvm::Type *LLVMVoidTy;
   llvm::Type *LLVMInt32Ty;
   llvm::Type *LLVMInt1Ty; // Boolean type (i1)
+  llvm::Type *LLVMInt64Ty; // <<< ADDED LLVM i64 type
   llvm::PointerType *LLVMInt32PtrTy;
   llvm::PointerType *LLVMInt1PtrTy;
   llvm::PointerType *LLVMInt64PtrTy; // Added for potential vector pointers
@@ -72,8 +72,7 @@ class ToIRVisitor : public ASTVisitor {
   llvm::Function *getOrDeclareReadValue();
   llvm::Function *getOrDeclareWriteInt();
   llvm::Function *getOrDeclareWriteBool();
-  // Add declaration for runtime_allocate when needed
-  // llvm::Function* getOrDeclareAllocate();
+  llvm::Function* getOrDeclareAllocate(); // <<< ADDED Declaration
 
 public:
   // Constructor
@@ -96,8 +95,7 @@ public:
   virtual void visit(WhileLoop &Node) override;
   virtual void visit(Begin &Node) override;
   virtual void visit(Prim &Node) override;
-  // Add visit for VectorLiteral when defined
-  // virtual void visit(VectorLiteral &Node) override;
+  virtual void visit(VectorLiteral &Node) override;
 };
 
 } // namespace codegen

@@ -18,9 +18,17 @@ llvm::SourceMgr::DiagKind DiagnosticKind[] = {
 
 } // namespace
 const char *DiagnosticsEngine::getDiagnosticText(unsigned DiagID) {
+  // Add bounds check if necessary
+  if (DiagID >= sizeof(DiagnosticText) / sizeof(DiagnosticText[0])) {
+    return "Invalid diagnostic ID";
+  }
   return DiagnosticText[DiagID];
 }
 llvm::SourceMgr::DiagKind
 DiagnosticsEngine::getDiagnosticKind(unsigned DiagID) {
+  // Add bounds check if necessary
+   if (DiagID >= sizeof(DiagnosticKind) / sizeof(DiagnosticKind[0])) {
+    return llvm::SourceMgr::DK_Error; // Default to error for invalid ID
+  }
   return DiagnosticKind[DiagID];
 }

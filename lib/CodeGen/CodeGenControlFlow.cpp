@@ -83,7 +83,7 @@ void ToIRVisitor::visit(If &Node) {
     }
   } else if (!ThenV && ResultType == VoidType::get()) {
     ThenV = LLVMInt32Zero;
-  }                                                 // Void result is i32 0
+  } // Void result is i32 0
   BasicBlock *ThenEndBB = Builder.GetInsertBlock(); // Get block before branch
   Builder.CreateBr(MergeBB);
 
@@ -112,7 +112,7 @@ void ToIRVisitor::visit(If &Node) {
     }
   } else if (!ElseV && ResultType == VoidType::get()) {
     ElseV = LLVMInt32Zero;
-  }                                                 // Void result is i32 0
+  } // Void result is i32 0
   BasicBlock *ElseEndBB = Builder.GetInsertBlock(); // Get block before branch
   Builder.CreateBr(MergeBB);
 

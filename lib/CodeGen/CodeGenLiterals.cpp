@@ -2,6 +2,7 @@
 #include "llracket/AST/AST.h"
 #include "llracket/Basic/Type.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h" // Added for PointerType
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -20,17 +21,12 @@ void ToIRVisitor::visit(Int &Node) {
                  << Node.getValue() << "\n";
     Intval = 0;
   }
-  // Access LLVMInt32Ty and V directly as members
-  V = ConstantInt::get(LLVMInt32Ty, Intval, true); // MODIFIED: Constant name
+  V = ConstantInt::get(LLVMInt32Ty, Intval, true);
 }
 
 void ToIRVisitor::visit(Bool &Node) {
-  // Access LLVMTrueConstant, LLVMFalseConstant, V directly
-  V = Node.getValue() ? LLVMTrueConstant
-                      : LLVMFalseConstant; // MODIFIED: Constant names
+  V = Node.getValue() ? LLVMTrueConstant : LLVMFalseConstant;
 }
 
-void ToIRVisitor::visit(Void &Node) {
-  // Access LLVMInt32Zero, V directly
-  V = LLVMInt32Zero; // MODIFIED: Constant name
-}
+void ToIRVisitor::visit(Void &Node) { V = LLVMInt32Zero; }
+

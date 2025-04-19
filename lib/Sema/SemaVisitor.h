@@ -89,8 +89,7 @@ public:
   virtual void visit(WhileLoop &Node) override;
   virtual void visit(Begin &Node) override;
   virtual void visit(Prim &Node) override;
-  // Add visit for VectorLiteral when it's defined
-  // virtual void visit(VectorLiteral &Node) override;
+  virtual void visit(VectorLiteral &Node) override; // ADDED Declaration
 };
 
 // --- reportError TEMPLATE DEFINITION REMAINS HERE ---
