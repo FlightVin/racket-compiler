@@ -6,16 +6,17 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/ErrorHandling.h"
 
 // Forward declarations from LLVM
 namespace llvm {
 class Value;
-// class Type; // llvm::Type conflicts with llracket::Type, use fully qualified name
+// class Type; // llvm::Type conflicts with llracket::Type, use fully qualified
+// name
 class PointerType;
 class Constant;
 class Function;
@@ -52,18 +53,20 @@ class ToIRVisitor : public ASTVisitor {
   llvm::Constant *LLVMFalseConstant; // LLVM i1 false
 
   // Processing State
-  llvm::Value *V;                                             // Current value being processed
-  llvm::StringMap<llvm::AllocaInst *> nameMap;                // Map variable names to their memory locations
+  llvm::Value *V; // Current value being processed
+  llvm::StringMap<llvm::AllocaInst *>
+      nameMap; // Map variable names to their memory locations
   // Reference to the type map from Sema. Uses default DenseMapInfo<Expr*>
-  const llvm::DenseMap<Expr *, Type*> &ExprTypes; // MODIFIED: Removed TypePointerInfo
+  const llvm::DenseMap<Expr *, Type *>
+      &ExprTypes; // MODIFIED: Removed TypePointerInfo
 
   // --- Private Helper Methods ---
 
   /** Helper to get LLVM type from our Type* */
-  llvm::Type *getLLVMType(Type* T); // Takes Type*
+  llvm::Type *getLLVMType(Type *T); // Takes Type*
 
   /** Helper to get Pointer type for Alloca based on storage type */
-  llvm::PointerType *getLLVMPtrType(Type* T); // Takes Type*
+  llvm::PointerType *getLLVMPtrType(Type *T); // Takes Type*
 
   // --- Runtime Function Getters/Declarators ---
   llvm::Function *getOrDeclareReadValue();
@@ -74,7 +77,8 @@ class ToIRVisitor : public ASTVisitor {
 
 public:
   // Constructor
-  ToIRVisitor(llvm::Module *M, const llvm::DenseMap<Expr *, Type*> &Types); // MODIFIED
+  ToIRVisitor(llvm::Module *M,
+              const llvm::DenseMap<Expr *, Type *> &Types); // MODIFIED
 
   // --- Public Interface Methods ---
   virtual void run(AST *Tree); // Main entry point

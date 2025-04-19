@@ -62,16 +62,17 @@ int LLRacket::exec() {
   bool typeCheckSuccessful = S.typeCheck(Tree);
 
   if (!typeCheckSuccessful || Diags.numErrors()) {
-      llvm::errs() << "Semantic or Type error occurred.\n";
-      return 2;
+    llvm::errs() << "Semantic or Type error occurred.\n";
+    return 2;
   }
   // Retrieve the type results map (now map<Expr*, Type*>)
-  const llvm::DenseMap<Expr *, Type*>& typeResults = S.getExprTypes();
+  const llvm::DenseMap<Expr *, Type *> &typeResults = S.getExprTypes();
   llvm::outs() << "Sem completed" << "\n";
 
   // 4. Code Generation
   // Instantiate CodeGen, passing the type results map
-  // Note: CodeGen constructor now only takes Module*, LLVMContext*, and the map pointer
+  // Note: CodeGen constructor now only takes Module*, LLVMContext*, and the map
+  // pointer
   CodeGen CG(Module.get(), Ctx.get(), &typeResults);
   llvm::outs() << "Codegen created" << "\n";
 

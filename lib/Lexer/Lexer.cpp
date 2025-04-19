@@ -37,7 +37,7 @@ void Lexer::next(Token &token) {
     formToken(token, End, TokenKind::integer_literal);
     return;
   }
-  
+
   // Handle boolean literals
   if (*BufferPtr == '#') {
     if (*(BufferPtr + 1) == 't') {
@@ -49,14 +49,15 @@ void Lexer::next(Token &token) {
       return;
     }
   }
-  
-  if (charinfo::isLetter(*BufferPtr) || *BufferPtr == '=' || *BufferPtr == '!') {
+
+  if (charinfo::isLetter(*BufferPtr) || *BufferPtr == '=' ||
+      *BufferPtr == '!') {
     const char *End = BufferPtr + 1;
     while (charinfo::isIdentifierChar(*End))
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
-    
+
     // Check for keywords and operators
     if (Text == "read") {
       formToken(token, End, TokenKind::read);
@@ -102,7 +103,7 @@ void Lexer::next(Token &token) {
       formToken(token, End, TokenKind::kw_begin);
       return;
     }
-    
+
     // Otherwise it's an identifier
     formToken(token, End, TokenKind::identifier);
     return;
@@ -129,7 +130,7 @@ void Lexer::next(Token &token) {
       formToken(token, BufferPtr + 1, TokenKind::lt);
     }
     break;
-    
+
   case '>':
     if (*(BufferPtr + 1) == '=') {
       formToken(token, BufferPtr + 2, TokenKind::ge);

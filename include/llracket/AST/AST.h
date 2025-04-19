@@ -61,8 +61,18 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf,
-    ExprSetBang, ExprBegin, ExprWhileLoop, ExprVoid};
+  enum ExprKind {
+    ExprPrim,
+    ExprInt,
+    ExprVar,
+    ExprLet,
+    ExprBool,
+    ExprIf,
+    ExprSetBang,
+    ExprBegin,
+    ExprWhileLoop,
+    ExprVoid
+  };
 
 private:
   const ExprKind Kind;
@@ -103,11 +113,12 @@ public:
   StringRef getValue() const { return Value; };
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
-  static bool classof(const Expr *E) { return E->getKind() == ExprInt;}
+  static bool classof(const Expr *E) { return E->getKind() == ExprInt; }
 };
 
-class Var : public Expr { 
+class Var : public Expr {
   StringRef Name;
+
 public:
   Var(StringRef Name) : Expr(ExprVar), Name(Name) {}
   StringRef getName() const { return Name; }
@@ -151,7 +162,8 @@ class If : public Expr {
 
 public:
   If(Expr *Condition, Expr *ThenExpr, Expr *ElseExpr)
-      : Expr(ExprIf), Condition(Condition), ThenExpr(ThenExpr), ElseExpr(ElseExpr) {}
+      : Expr(ExprIf), Condition(Condition), ThenExpr(ThenExpr),
+        ElseExpr(ElseExpr) {}
 
   Expr *getCondition() const { return Condition; }
   Expr *getThenExpr() const { return ThenExpr; }
@@ -164,6 +176,7 @@ public:
 class SetBang : public Expr {
   StringRef VarName;
   Expr *ValueExpr;
+
 public:
   SetBang(StringRef VarName, Expr *ValueExpr)
       : Expr(ExprSetBang), VarName(VarName), ValueExpr(ValueExpr) {}
@@ -176,12 +189,13 @@ public:
 };
 
 class Begin : public Expr {
-  std::vector<Expr*> Exprs;
-public:
-  Begin(std::vector<Expr*> Exprs) : Expr(ExprBegin), Exprs(std::move(Exprs)) {}
+  std::vector<Expr *> Exprs;
 
-  const std::vector<Expr*>& getExprs() const { return Exprs; }
-  Expr* getResultExpr() const { return Exprs.empty() ? nullptr : Exprs.back(); }
+public:
+  Begin(std::vector<Expr *> Exprs) : Expr(ExprBegin), Exprs(std::move(Exprs)) {}
+
+  const std::vector<Expr *> &getExprs() const { return Exprs; }
+  Expr *getResultExpr() const { return Exprs.empty() ? nullptr : Exprs.back(); }
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprBegin; }
@@ -190,6 +204,7 @@ public:
 class WhileLoop : public Expr {
   Expr *Condition;
   Expr *Body;
+
 public:
   WhileLoop(Expr *Condition, Expr *Body)
       : Expr(ExprWhileLoop), Condition(Condition), Body(Body) {}

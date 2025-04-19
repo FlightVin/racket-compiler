@@ -10,11 +10,12 @@ using namespace llracket::sema;
 // --- TypeCheckVisitor Methods Implementation ---
 
 void TypeCheckVisitor::visit(Program &Node) {
-    if (Node.getExpr()) {
-      // Visit the main expression. Returns Type*, but we don't use it directly here.
-      visitAndGetType(Node.getExpr());
-    } else {
-      reportError(getLoc(), diag::err_empty_program);
-    }
-    // No type recorded for Program node itself.
+  if (Node.getExpr()) {
+    // Visit the main expression. Returns Type*, but we don't use it directly
+    // here.
+    visitAndGetType(Node.getExpr());
+  } else {
+    reportError(getLoc(), diag::err_empty_program);
+  }
+  // No type recorded for Program node itself.
 }
