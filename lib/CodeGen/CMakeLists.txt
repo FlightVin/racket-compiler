@@ -1,4 +1,5 @@
-add_library(llracketCodeGen
+add_library(
+    llracketCodeGen
     CodeGen.cpp
     CodeGenProgram.cpp
     CodeGenLiterals.cpp

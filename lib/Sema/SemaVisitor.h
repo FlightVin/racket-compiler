@@ -2,18 +2,21 @@
 #define LLRACKET_SEMA_VISITOR_H
 
 #include "llracket/AST/AST.h"
-#include "llracket/Basic/Type.h"
 #include "llracket/Basic/Diagnostic.h" // Include DiagnosticsEngine definition
+#include "llracket/Basic/Type.h"       // Include new Type definitions
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/SMLoc.h" // For SMLoc
-#include <string> // For error message context
-#include <utility> // *** ADD THIS FOR std::forward ***
+#include <string>
+#include <utility> // For std::forward
 
 // Forward declarations
 namespace llvm {
 class Twine;
-}
+} // namespace llvm
+
+// Forward declare Expr for DenseMap
+class Expr;
 
 namespace llracket {
 namespace sema { // Internal namespace for Sema implementation details
@@ -22,10 +25,13 @@ namespace sema { // Internal namespace for Sema implementation details
  * @brief Internal visitor class to perform static type checking.
  */
 class TypeCheckVisitor : public ASTVisitor {
-  DiagnosticsEngine &Diags;                      ///< Reference to the diagnostics engine
-  llvm::DenseMap<Expr *, ExprType> &ExprTypes; ///< Map to store expression types
-  llvm::StringMap<ExprType> &CurrentVarTypes;    ///< Current scope's variable types
-  bool HasError;                                 ///< Flag if any error occurred
+  DiagnosticsEngine &Diags; ///< Reference to the diagnostics engine
+  llvm::DenseMap<Expr *, Type *>
+      &ExprTypes; ///< Map to store expression types (MODIFIED: Removed
+                  ///< TypePointerInfo)
+  llvm::StringMap<Type *>
+      &CurrentVarTypes; ///< Current scope's variable types (Value is Type*)
+  bool HasError;        ///< Flag if any error occurred
 
   // --- Private Helper Methods (Implementations in Sema.cpp) ---
 
@@ -33,21 +39,23 @@ class TypeCheckVisitor : public ASTVisitor {
   llvm::SMLoc getLoc(Expr *Node = nullptr);
 
   /** Records the determined type for an AST node. */
-  void recordType(Expr *Node, ExprType T);
+  void recordType(Expr *Node, Type *T); // Takes Type*
 
   /** Reports a type mismatch error (Expected X, got Y). */
-  void reportTypeError(llvm::SMLoc Loc, ExprType Expected, ExprType Actual, const std::string &context = "");
+  void reportTypeError(llvm::SMLoc Loc, Type *Expected, Type *Actual,
+                       const std::string &context = ""); // Takes Type*
 
   /** Reports an error when a specific type was expected. */
-  void reportExpectedTypeError(llvm::SMLoc Loc, ExprType Expected, ExprType Actual, const std::string &context = "");
+  void reportExpectedTypeError(llvm::SMLoc Loc, Type *Expected, Type *Actual,
+                               const std::string &context = ""); // Takes Type*
 
-  // --- reportError TEMPLATE DECLARATION REMAINS HERE ---
   /** Reports a general error using a specific diagnostic ID. */
   template <typename... Args>
   void reportError(llvm::SMLoc Loc, unsigned DiagID, Args &&...Arguments);
 
-  /** Recursive helper to visit nodes and return their type. */
-  ExprType visitAndGetType(Expr *Node);
+  /** Recursive helper to visit nodes and return their type. Returns ErrorType*
+   * on failure. */
+  Type *visitAndGetType(Expr *Node); // Returns Type*
 
 public:
   /**
@@ -57,18 +65,20 @@ public:
    * @param VarTypes Map representing the current variable type scope.
    */
   TypeCheckVisitor(DiagnosticsEngine &Diags,
-                   llvm::DenseMap<Expr *, ExprType> &ExprTypes,
-                   llvm::StringMap<ExprType> &VarTypes);
+                   llvm::DenseMap<Expr *, Type *> &ExprTypes, // MODIFIED
+                   llvm::StringMap<Type *> &VarTypes);
 
   /** Returns true if an error was encountered during the visit. */
   bool hasError() const;
 
-  /** Checks for any remaining unresolved NeedsInference types after traversal. */
-  bool checkUnresolvedTypes();
+  /** Checks for any remaining unresolved types (e.g., nullptr if used) after
+   * traversal. */
+  bool checkUnresolvedTypes(); // Implementation might change based on how
+                               // inference is handled
 
   // --- ASTVisitor Overrides (Implementations in separate .cpp files) ---
   virtual void visit(Program &Node) override;
-  virtual void visit(Expr &Node) override; // Dispatcher (Implemented in Sema.cpp)
+  virtual void visit(Expr &Node) override;
   virtual void visit(Int &Node) override;
   virtual void visit(Bool &Node) override;
   virtual void visit(Void &Node) override;
@@ -79,18 +89,17 @@ public:
   virtual void visit(WhileLoop &Node) override;
   virtual void visit(Begin &Node) override;
   virtual void visit(Prim &Node) override;
+  // Add visit for VectorLiteral when it's defined
+  // virtual void visit(VectorLiteral &Node) override;
 };
 
-
-// --- reportError TEMPLATE DEFINITION MOVED HERE ---
+// --- reportError TEMPLATE DEFINITION REMAINS HERE ---
 template <typename... Args>
-void TypeCheckVisitor::reportError(llvm::SMLoc Loc, unsigned DiagID, Args &&...Arguments) {
-    // Need to ensure Diags is accessible (it is, as a member)
-    // Also need llvm::formatv (included via Diagnostic.h)
-    Diags.report(Loc, DiagID, std::forward<Args>(Arguments)...);
-    HasError = true;
+void TypeCheckVisitor::reportError(llvm::SMLoc Loc, unsigned DiagID,
+                                   Args &&...Arguments) {
+  Diags.report(Loc, DiagID, std::forward<Args>(Arguments)...);
+  HasError = true;
 }
-
 
 } // namespace sema
 } // namespace llracket

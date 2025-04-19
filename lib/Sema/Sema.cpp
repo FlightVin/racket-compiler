@@ -1,13 +1,14 @@
 #include "llracket/Sema/Sema.h"
 #include "SemaVisitor.h" // Include the internal visitor definition
 #include "llracket/AST/AST.h"
-#include "llvm/Support/Casting.h" // For llvm::cast in visit(Expr&)
+#include "llracket/Basic/Type.h" // Needed for types like ErrorType
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/Casting.h"       // For llvm::cast in visit(Expr&)
 #include "llvm/Support/ErrorHandling.h" // For llvm_unreachable
-#include "llvm/ADT/Twine.h" // For error message construction? Might not be needed here now
 
 // Include headers needed for helper implementations, if any were missed
 #include <string>
-#include "llracket/Lexer/Token.h" // For getTypeName in checkUnresolvedTypes
+// #include "llracket/Lexer/Token.h" // Maybe not needed now
 
 using namespace llvm;
 using namespace llracket;
@@ -16,7 +17,8 @@ using namespace llracket::sema; // Use the internal sema namespace
 // --- Sema class methods (Public Interface) ---
 bool Sema::typeCheck(AST *Tree) {
   if (!Tree) {
-    Diags.report(llvm::SMLoc(), diag::err_internal_compiler, "Null AST provided to Sema");
+    Diags.report(llvm::SMLoc(), diag::err_internal_compiler,
+                 "Null AST provided to Sema");
     return false;
   }
   ExprTypes.clear();
@@ -26,7 +28,8 @@ bool Sema::typeCheck(AST *Tree) {
   TypeCheckVisitor Checker(Diags, ExprTypes, CurrentVarTypes);
   Tree->accept(Checker);
 
-  // Perform final check for unresolved inference types
+  // Perform final check (implementation might change depending on inference
+  // strategy)
   Checker.checkUnresolvedTypes();
 
   // Return success status based on visitor flag and diagnostics count
@@ -38,122 +41,135 @@ bool Sema::semantic(AST *Tree) {
   return typeCheck(Tree);
 }
 
-
 // --- TypeCheckVisitor Constructor Implementation ---
-TypeCheckVisitor::TypeCheckVisitor(DiagnosticsEngine &D,
-                                   llvm::DenseMap<Expr *, ExprType> &ET,
-                                   llvm::StringMap<ExprType> &VT)
+TypeCheckVisitor::TypeCheckVisitor(
+    DiagnosticsEngine &D,
+    llvm::DenseMap<Expr *, Type *>
+        &ET, // Note: llracket::Type implied by Sema.h context
+    llvm::StringMap<Type *>
+        &VT) // Note: llracket::Type implied by Sema.h context
     : Diags(D), ExprTypes(ET), CurrentVarTypes(VT), HasError(false) {}
 
 // --- TypeCheckVisitor Helper Method Implementations ---
 
-bool TypeCheckVisitor::hasError() const {
-    return HasError;
-}
+bool TypeCheckVisitor::hasError() const { return HasError; }
 
 llvm::SMLoc TypeCheckVisitor::getLoc(Expr *Node) {
-    // Placeholder - enhance when Parser adds locations to AST nodes
-    // if (Node && Node->hasLocation()) { return Node->getLocation(); }
-    return llvm::SMLoc();
+  // Placeholder - enhance when Parser adds locations to AST nodes
+  return llvm::SMLoc();
 }
 
-void TypeCheckVisitor::recordType(Expr *Node, ExprType T) {
-    if (Node) {
-        ExprTypes[Node] = T;
-    }
-}
-
-void TypeCheckVisitor::reportTypeError(llvm::SMLoc Loc, ExprType Expected, ExprType Actual, const std::string &context) {
-    std::string context_msg = context.empty() ? "" : (" " + context);
-    Diags.report(Loc, diag::err_type_mismatch, getTypeName(Expected), getTypeName(Actual), context_msg);
+// Takes llracket::Type*
+void TypeCheckVisitor::recordType(Expr *Node, Type *T) {
+  if (Node && T) {
+    ExprTypes[Node] = T;
+  } else if (Node) {
+    // If T is null, record ErrorType
+    ExprTypes[Node] = ErrorType::get();
     HasError = true;
+  }
 }
 
-void TypeCheckVisitor::reportExpectedTypeError(llvm::SMLoc Loc, ExprType Expected, ExprType Actual, const std::string &context) {
-    std::string context_msg = context.empty() ? "" : (" " + context);
-    Diags.report(Loc, diag::err_expected_type, getTypeName(Expected), getTypeName(Actual), context_msg);
-    HasError = true;
+// Takes llracket::Type*
+void TypeCheckVisitor::reportTypeError(llvm::SMLoc Loc, Type *Expected,
+                                       Type *Actual,
+                                       const std::string &context) {
+  std::string context_msg = context.empty() ? "" : (" " + context);
+  Diags.report(Loc, diag::err_type_mismatch,
+               Expected ? Expected->getName() : "<nullptr-expected>",
+               Actual ? Actual->getName() : "<nullptr-actual>", context_msg);
+  HasError = true;
 }
 
-// <<< REMOVE THE reportError TEMPLATE DEFINITION FROM HERE >>>
-// template <typename... Args>
-// void TypeCheckVisitor::reportError(llvm::SMLoc Loc, unsigned DiagID, Args &&...Arguments) {
-//     Diags.report(Loc, DiagID, std::forward<Args>(Arguments)...);
-//     HasError = true;
-// }
+// Takes llracket::Type*
+void TypeCheckVisitor::reportExpectedTypeError(llvm::SMLoc Loc, Type *Expected,
+                                               Type *Actual,
+                                               const std::string &context) {
+  std::string context_msg = context.empty() ? "" : (" " + context);
+  Diags.report(Loc, diag::err_expected_type,
+               Expected ? Expected->getName() : "<nullptr-expected>",
+               Actual ? Actual->getName() : "<nullptr-actual>", context_msg);
+  HasError = true;
+}
 
+// MODIFIED: Explicitly use llracket::Type* for the return type definition
+llracket::Type *TypeCheckVisitor::visitAndGetType(Expr *Node) {
+  if (!Node) {
+    reportError(llvm::SMLoc(), diag::err_internal_compiler,
+                "Null AST node encountered during type checking");
+    return ErrorType::get(); // Returns llracket::ErrorType*
+  }
 
-ExprType TypeCheckVisitor::visitAndGetType(Expr *Node) {
-    if (!Node) {
-        // Use the template now defined in the header
-        reportError(llvm::SMLoc(), diag::err_internal_compiler, "Null AST node encountered during type checking");
-        return ExprType::Error;
+  Node->accept(*this); // Dispatch to specific visit method
+
+  auto it = ExprTypes.find(Node);
+  if (it != ExprTypes.end()) {
+    // Check if an error occurred *during* or *before* processing this node
+    if (HasError && it->second != ErrorType::get()) {
+      recordType(Node, ErrorType::get()); // Correct the record
+      return ErrorType::get();            // Return llracket::ErrorType*
     }
-    Node->accept(*this); // Dispatch to specific visit method
+    // it->second is llracket::Type*
+    return it->second; // Return recorded type (could be ErrorType if sub-visit
+                       // failed)
+  }
 
-    auto it = ExprTypes.find(Node);
-    if (it != ExprTypes.end()) {
-        // If a sub-visit reported an error, ensure we propagate Error type
-        if (HasError && it->second != ExprType::Error) {
-             return ExprType::Error;
-        }
-        return it->second;
-    }
-
-    // Fallback if type wasn't recorded (should not happen ideally)
-    reportError(getLoc(Node), diag::err_internal_compiler, "Type not recorded for visited node");
-    recordType(Node, ExprType::Error);
-    return ExprType::Error;
+  // Fallback if type wasn't recorded
+  reportError(getLoc(Node), diag::err_internal_compiler,
+              "Type not recorded for visited node");
+  recordType(Node, ErrorType::get()); // Record error type
+  return ErrorType::get();            // Return llracket::ErrorType*
 }
 
 bool TypeCheckVisitor::checkUnresolvedTypes() {
-    bool foundUnresolved = false;
-    for (auto &entry : ExprTypes) {
-      if (entry.second == ExprType::NeedsInference) {
-        std::string nodeDesc = "expression"; // Default description
-        if (Expr *expr = entry.first) {
-          if (auto *prim = llvm::dyn_cast<Prim>(expr)) {
-            nodeDesc = "primitive operation '" + std::string(tok::getTokenName(prim->getOp())) + "'";
-          } else if (auto *var = llvm::dyn_cast<Var>(expr)) {
-            nodeDesc = "variable '" + var->getName().str() + "'";
-          } // Add more cases if needed
-        } else {
-          nodeDesc = "unknown expression";
-        }
-        // Use the template now defined in the header
-        reportError(getLoc(entry.first), diag::err_cannot_infer_type, nodeDesc);
-        foundUnresolved = true;
-        entry.second = ExprType::Error; // Mark as error after reporting
-      }
+  bool foundNull = false;
+  for (auto &entry : ExprTypes) {
+    if (entry.second == nullptr) {
+      reportError(getLoc(entry.first), diag::err_internal_compiler,
+                  "Internal error: Null type found after analysis.");
+      entry.second = ErrorType::get(); // Mark as error
+      foundNull = true;
     }
-
-    if (foundUnresolved) {
-      HasError = true; // Ensure global error flag is set
-    }
-    return !foundUnresolved;
+  }
+  if (foundNull)
+    HasError = true;
+  return !foundNull;
 }
-
 
 // --- TypeCheckVisitor Dispatcher Implementation ---
 void TypeCheckVisitor::visit(Expr &Node) {
-    // Uses llvm::cast, requires AST node definitions
-    switch(Node.getKind()) {
-        case Expr::ExprPrim:      llvm::cast<Prim>(Node).accept(*this); break;
-        case Expr::ExprInt:       llvm::cast<Int>(Node).accept(*this); break;
-        case Expr::ExprVar:       llvm::cast<Var>(Node).accept(*this); break;
-        case Expr::ExprLet:       llvm::cast<Let>(Node).accept(*this); break;
-        case Expr::ExprBool:      llvm::cast<Bool>(Node).accept(*this); break;
-        case Expr::ExprIf:        llvm::cast<If>(Node).accept(*this); break;
-        case Expr::ExprSetBang:   llvm::cast<SetBang>(Node).accept(*this); break;
-        case Expr::ExprBegin:     llvm::cast<Begin>(Node).accept(*this); break;
-        case Expr::ExprWhileLoop: llvm::cast<WhileLoop>(Node).accept(*this); break;
-        case Expr::ExprVoid:      llvm::cast<Void>(Node).accept(*this); break;
-        // No default needed if all enum values are covered
-    }
+  switch (Node.getKind()) {
+  case Expr::ExprPrim:
+    llvm::cast<Prim>(Node).accept(*this);
+    break;
+  case Expr::ExprInt:
+    llvm::cast<Int>(Node).accept(*this);
+    break;
+  case Expr::ExprVar:
+    llvm::cast<Var>(Node).accept(*this);
+    break;
+  case Expr::ExprLet:
+    llvm::cast<Let>(Node).accept(*this);
+    break;
+  case Expr::ExprBool:
+    llvm::cast<Bool>(Node).accept(*this);
+    break;
+  case Expr::ExprIf:
+    llvm::cast<If>(Node).accept(*this);
+    break;
+  case Expr::ExprSetBang:
+    llvm::cast<SetBang>(Node).accept(*this);
+    break;
+  case Expr::ExprBegin:
+    llvm::cast<Begin>(Node).accept(*this);
+    break;
+  case Expr::ExprWhileLoop:
+    llvm::cast<WhileLoop>(Node).accept(*this);
+    break;
+  case Expr::ExprVoid:
+    llvm::cast<Void>(Node).accept(*this);
+    break;
+    // Add: case Expr::ExprVectorLiteral:
+    // llvm::cast<VectorLiteral>(Node).accept(*this); break;
+  }
 }
-
-
-// <<< REMOVE EXPLICIT TEMPLATE INSTANTIATIONS FROM HERE >>>
-// template void TypeCheckVisitor::reportError<char const*>(llvm::SMLoc, unsigned int, char const*&&);
-// template void TypeCheckVisitor::reportError<char const*, char const*>(llvm::SMLoc, unsigned int, char const*&&, char const*&&);
-// ...

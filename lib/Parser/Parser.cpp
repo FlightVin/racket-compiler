@@ -7,7 +7,6 @@
 using namespace llracket;
 using tok::TokenKind;
 
-
 AST *Parser::parse() {
   Program *P = new Program(parseExpr());
   llvm::outs() << "Created program" << "\n";
@@ -28,7 +27,7 @@ Expr *Parser::parseExpr() {
 
   if (Tok.is(TokenKind::integer_literal)) {
     Int *Ret = new Int(Tok.getText());
-    llvm::outs() << "I see the integer "<< Tok.getText() << "\n";
+    llvm::outs() << "I see the integer " << Tok.getText() << "\n";
     advance();
     return Ret;
   }
@@ -47,8 +46,8 @@ Expr *Parser::parseExpr() {
     return Ret;
   }
 
-  if (Tok.is(TokenKind::identifier)) { 
-    llvm::outs() << "I see an identifier in expr "<< Tok.getText() << "\n";
+  if (Tok.is(TokenKind::identifier)) {
+    llvm::outs() << "I see an identifier in expr " << Tok.getText() << "\n";
     Var *Ret = new Var(Tok.getText());
     advance();
     return Ret;
@@ -70,22 +69,22 @@ Expr *Parser::parseExpr() {
   if (Tok.is(TokenKind::kw_if)) {
     llvm::outs() << "entering if" << "\n";
     advance();
-    
+
     Expr *condition = parseExpr();
     if (!condition)
       return ErrorHandler();
-    
+
     Expr *thenExpr = parseExpr();
     if (!thenExpr)
       return ErrorHandler();
-    
+
     Expr *elseExpr = parseExpr();
     if (!elseExpr)
       return ErrorHandler();
-    
+
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-      
+
     return new If(condition, thenExpr, elseExpr);
   }
 
@@ -94,7 +93,8 @@ Expr *Parser::parseExpr() {
     llvm::outs() << "entering set!" << "\n";
     advance(); // Consume 'set!'
     if (!Tok.is(TokenKind::identifier)) {
-      Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected variable name after set!");
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token,
+                   "Expected variable name after set!");
       skipUntil(tok::r_paren);
       return nullptr;
     }
@@ -102,9 +102,11 @@ Expr *Parser::parseExpr() {
     advance(); // Consume variable name
 
     Expr *valueExpr = parseExpr();
-    if (!valueExpr) return ErrorHandler();
+    if (!valueExpr)
+      return ErrorHandler();
 
-    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler();
     llvm::outs() << "exiting set!" << "\n";
     return new SetBang(varName, valueExpr);
   }
@@ -115,12 +117,15 @@ Expr *Parser::parseExpr() {
     advance(); // Consume 'while'
 
     Expr *condition = parseExpr();
-    if (!condition) return ErrorHandler();
+    if (!condition)
+      return ErrorHandler();
 
     Expr *body = parseExpr();
-    if (!body) return ErrorHandler();
+    if (!body)
+      return ErrorHandler();
 
-    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler();
     llvm::outs() << "exiting while" << "\n";
     return new WhileLoop(condition, body);
   }
@@ -129,22 +134,25 @@ Expr *Parser::parseExpr() {
   if (Tok.is(TokenKind::kw_begin)) {
     llvm::outs() << "entering begin" << "\n";
     advance(); // Consume 'begin'
-    std::vector<Expr*> exprs;
+    std::vector<Expr *> exprs;
     while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
       Expr *expr = parseExpr();
       if (!expr) {
         // Clean up allocated expressions if error occurs
-        for (Expr *e : exprs) delete e;
+        for (Expr *e : exprs)
+          delete e;
         return ErrorHandler();
       }
       exprs.push_back(expr);
     }
     if (exprs.empty()) {
-      Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected at least one expression in begin");
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token,
+                   "Expected at least one expression in begin");
       return ErrorHandler();
     }
     if (!consume(TokenKind::r_paren)) {
-      for (Expr *e : exprs) delete e;
+      for (Expr *e : exprs)
+        delete e;
       return ErrorHandler();
     }
     llvm::outs() << "exiting begin" << "\n";
@@ -155,7 +163,8 @@ Expr *Parser::parseExpr() {
   if (Tok.is(TokenKind::kw_void)) {
     llvm::outs() << "entering void" << "\n";
     advance(); // Consume 'void'
-    if (!consume(TokenKind::r_paren)) return ErrorHandler();
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler();
     llvm::outs() << "exiting void" << "\n";
     return new Void();
   }
@@ -174,10 +183,10 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
     if (!E1)
       return ErrorHandler();
-    
+
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-      
+
     return new Prim(TokenKind::not_, E1);
   }
 
@@ -187,14 +196,14 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
     if (!E1)
       return ErrorHandler();
-    
+
     Expr *E2 = parseExpr();
     if (!E2)
       return ErrorHandler();
-    
+
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-      
+
     return new Prim(TokenKind::and_, E1, E2);
   }
 
@@ -204,21 +213,20 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
     if (!E1)
       return ErrorHandler();
-    
+
     Expr *E2 = parseExpr();
     if (!E2)
       return ErrorHandler();
-    
+
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-      
+
     return new Prim(TokenKind::or_, E1, E2);
   }
 
   // Handle arithmetic and comparison operators
-  if (Tok.isOneOf(TokenKind::plus, TokenKind::minus, 
-                 TokenKind::eq, TokenKind::lt, TokenKind::le,
-                 TokenKind::gt, TokenKind::ge)) {
+  if (Tok.isOneOf(TokenKind::plus, TokenKind::minus, TokenKind::eq,
+                  TokenKind::lt, TokenKind::le, TokenKind::gt, TokenKind::ge)) {
     TokenKind opKind = Tok.getKind();
     advance();
 
@@ -235,56 +243,56 @@ Expr *Parser::parseExpr() {
     Expr *E2 = parseExpr();
     if (!E2)
       return ErrorHandler();
-      
+
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-      
+
     return new Prim(opKind, E1, E2);
   }
-  
+
   return ErrorHandler();
 }
 
 Let *Parser::parseLetExpr() {
 
   if (!consume(TokenKind::kw_let)) {
-      return nullptr;
+    return nullptr;
   }
 
   if (!consume(TokenKind::l_paren)) {
-      return nullptr;
+    return nullptr;
   }
 
   if (!consume(TokenKind::l_square)) {
-      return nullptr;
+    return nullptr;
   }
 
   if (!Tok.is(TokenKind::identifier)) {
-      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
-      skipUntil(tok::r_square);
-      return nullptr;
+    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+    skipUntil(tok::r_square);
+    return nullptr;
   }
   StringRef VarName = Tok.getText();
-  llvm::outs() << "I see an identifier in let "<< VarName << "\n";
+  llvm::outs() << "I see an identifier in let " << VarName << "\n";
   advance();
 
   Expr *BindingExpr = parseExpr();
   if (!BindingExpr) {
-      return nullptr;
+    return nullptr;
   }
 
   if (!consume(TokenKind::r_square)) {
-      delete BindingExpr;
-      return nullptr;
+    delete BindingExpr;
+    return nullptr;
   }
 
   if (!consume(TokenKind::r_paren))
-      return nullptr;
+    return nullptr;
 
   Expr *BodyExpr = parseExpr();
   if (!BodyExpr) {
-      delete BindingExpr;
-      return nullptr;
+    delete BindingExpr;
+    return nullptr;
   }
 
   llvm::outs() << "exiting let" << "\n";

@@ -7,7 +7,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/StringRef.h"
 
 using llvm::StringRef;
 using namespace llracket;

@@ -1,4 +1,5 @@
-add_library(llracketSema
+add_library(
+    llracketSema
     Sema.cpp
     SemaProgram.cpp
     SemaLiteralsVars.cpp
