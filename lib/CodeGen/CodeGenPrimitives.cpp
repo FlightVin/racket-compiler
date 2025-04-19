@@ -59,13 +59,12 @@ void ToIRVisitor::visit(Prim &Node) {
   // --- Generate code based on op ---
   switch (Node.getOp()) {
   case TokenKind::read: {
-    // ... (unchanged from previous version) ...
+     // ... (unchanged) ...
       Function* ReadValueFn = getOrDeclareReadValue();
       int typeArgVal = 0;
       if (ResultType == BooleanType::get()) { typeArgVal = 1; }
       else if (ResultType != IntegerType::get()) {
-           llvm::errs() << "Codegen Internal Error: read expected Integer or Boolean type from Sema, got "
-                        << ResultType->getName() << "\n";
+           llvm::errs() << "Codegen Internal Error: read expected Integer or Boolean type from Sema, got " << ResultType->getName() << "\n";
       }
       Constant* typeArg = ConstantInt::get(LLVMInt32Ty, typeArgVal, true);
       V = Builder.CreateCall(ReadValueFn, {typeArg}, "readval");
@@ -73,8 +72,7 @@ void ToIRVisitor::visit(Prim &Node) {
           V = Builder.CreateICmpNE(V, LLVMInt32Zero, "read_bool_conv");
       } else if (V->getType() != ResultLLVMType) {
            if(!(ResultLLVMType == LLVMInt32Ty && V->getType() == LLVMInt32Ty)) { // Allow i32 result for i32 expected
-              llvm::errs() << "Codegen Internal Error: read_value call result (" << *V->getType()
-                           << ") doesn't match expected LLVM type (" << *ResultLLVMType << ").\n";
+              llvm::errs() << "Codegen Internal Error: read_value call result (" << *V->getType() << ") doesn't match expected LLVM type (" << *ResultLLVMType << ").\n";
               V = llvm::Constant::getNullValue(ResultLLVMType);
            }
       }
@@ -87,7 +85,7 @@ void ToIRVisitor::visit(Prim &Node) {
     V = Builder.CreateNSWAdd(E1V, E2V, "addtmp");
     break;
   case TokenKind::minus:
-    // ... (unchanged) ...
+     // ... (unchanged) ...
     if (E1V && E2V) { // Binary
         if (E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (- L): Expected i32.\n"; V = LLVMInt32Zero; return; }
         if (E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (- R): Expected i32.\n"; V = LLVMInt32Zero; return; }
@@ -98,7 +96,7 @@ void ToIRVisitor::visit(Prim &Node) {
     } else { llvm_unreachable("Invalid minus op state in CodeGen"); V = LLVMInt32Zero; return; }
     break;
   case TokenKind::lt: case TokenKind::le: case TokenKind::gt: case TokenKind::ge:
-    // ... (unchanged) ...
+     // ... (unchanged) ...
     if (!E1V || E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (cmp L): Expected i32.\n"; V = LLVMFalseConstant; return; }
     if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (cmp R): Expected i32.\n"; V = LLVMFalseConstant; return; }
     if (Node.getOp() == TokenKind::lt) V = Builder.CreateICmpSLT(E1V, E2V, "lttmp");
@@ -106,118 +104,79 @@ void ToIRVisitor::visit(Prim &Node) {
     else if (Node.getOp() == TokenKind::gt) V = Builder.CreateICmpSGT(E1V, E2V, "gttmp");
     else V = Builder.CreateICmpSGE(E1V, E2V, "getmp");
     break;
+
+  // *** UPDATED eq? for vectors ***
   case TokenKind::eq:
-    // ... (unchanged) ...
-     if (!E1V || !E2V || E1V->getType() != E2V->getType()) { llvm::errs() << "Codegen Type Error (eq?): Mismatched or null LLVM types.\n"; V = LLVMFalseConstant; return; }
-     if (E1V->getType() != LLVMInt1Ty && E1V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (eq?): Invalid LLVM type " << *E1V->getType() << "\n"; V = LLVMFalseConstant; return; }
+     if (!E1V || !E2V || E1V->getType() != E2V->getType()) {
+         llvm::errs() << "Codegen Type Error (eq?): Mismatched or null LLVM types.\n";
+         V = LLVMFalseConstant; return;
+     }
+     // Sema ensures operands are both Int, both Bool, both Void (-> i32), or both Vector (-> i64*)
+     // Check if operands are valid LLVM types for icmp eq
+     if (!E1V->getType()->isIntegerTy() && !E1V->getType()->isPointerTy()) {
+         llvm::errs() << "Codegen Error (eq?): Invalid LLVM type " << *E1V->getType() << " for comparison.\n";
+         V = LLVMFalseConstant; return;
+     }
+     // For Void (represented as i32), comparison is fine.
+     // For Vector (represented as i64*), pointer comparison is alias check.
     V = Builder.CreateICmpEQ(E1V, E2V, "eqtmp"); break;
-  case TokenKind::and_:
+  // *** END eq? UPDATE ***
+
+  case TokenKind::and_: case TokenKind::or_:
     // ... (unchanged) ...
-    if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and L): Expected i1.\n"; V = LLVMFalseConstant; return; }
-    if (!E2V || E2V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and R): Expected i1.\n"; V = LLVMFalseConstant; return; }
-    V = Builder.CreateAnd(E1V, E2V, "andtmp"); break;
-  case TokenKind::or_:
-    // ... (unchanged) ...
-    if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (or L): Expected i1.\n"; V = LLVMFalseConstant; return; }
-    if (!E2V || E2V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (or R): Expected i1.\n"; V = LLVMFalseConstant; return; }
-    V = Builder.CreateOr(E1V, E2V, "ortmp"); break;
+    if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and/or L): Expected i1.\n"; V = LLVMFalseConstant; return; }
+    if (!E2V || E2V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (and/or R): Expected i1.\n"; V = LLVMFalseConstant; return; }
+    if(Node.getOp() == TokenKind::and_) V = Builder.CreateAnd(E1V, E2V, "andtmp");
+    else V = Builder.CreateOr(E1V, E2V, "ortmp");
+    break;
   case TokenKind::not_:
     // ... (unchanged) ...
      if (!E1V || E1V->getType() != LLVMInt1Ty) { llvm::errs() << "Codegen Type Error (not): Expected i1.\n"; V = LLVMFalseConstant; return; }
     V = Builder.CreateXor(E1V, LLVMTrueConstant, "nottmp"); // xor %val, true
      break;
 
-  // --- ADDED VECTOR OPERATIONS ---
+  // --- VECTOR OPERATIONS ---
   case TokenKind::vector_length: {
-      if (!E1V || !E1V->getType()->isPointerTy()) {
-          llvm::errs() << "Codegen Type Error (vector-length): Expected pointer type.\n";
-          V = LLVMInt32Zero; return;
-      }
-      // Ensure pointer is i64*
+      if (!E1V || !E1V->getType()->isPointerTy()) { llvm::errs() << "Codegen Type Error (vector-length): Expected pointer type.\n"; V = LLVMInt32Zero; return; }
       Value* VecPtr = Builder.CreatePointerCast(E1V, LLVMInt64PtrTy, "veclen_ptr_cast");
-
-      // Load the tag (first i64)
       Value* TagPtr = Builder.CreateGEP(LLVMInt64Ty, VecPtr, ConstantInt::get(LLVMInt64Ty, 0), "tagptr");
       Value* Tag = Builder.CreateLoad(LLVMInt64Ty, TagPtr, "tag");
-
-      // Extract length (assume tag format: length << 1)
       Value* Length = Builder.CreateLShr(Tag, ConstantInt::get(LLVMInt64Ty, 1), "length");
-
-      // Result should be i32
       V = Builder.CreateTrunc(Length, LLVMInt32Ty, "length32");
       break;
   }
   case TokenKind::vector_ref: {
-      if (!E1V || !E1V->getType()->isPointerTy()) {
-          llvm::errs() << "Codegen Type Error (vector-ref): Expected pointer type for vector.\n";
-          V = llvm::Constant::getNullValue(ResultLLVMType); return;
-      }
-      if (!E2V || E2V->getType() != LLVMInt32Ty) {
-           // Sema ensures E2 is Int literal, CodeGen ensures it's i32
-          llvm::errs() << "Codegen Type Error (vector-ref): Expected i32 for index.\n";
-          V = llvm::Constant::getNullValue(ResultLLVMType); return;
-      }
-       // E2V already holds the i32 index value
+      if (!E1V || !E1V->getType()->isPointerTy()) { llvm::errs() << "Codegen Type Error (vector-ref): Expected pointer type for vector.\n"; V = llvm::Constant::getNullValue(ResultLLVMType); return; }
+      if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (vector-ref): Expected i32 for index.\n"; V = llvm::Constant::getNullValue(ResultLLVMType); return; }
       Value* VecPtr = Builder.CreatePointerCast(E1V, LLVMInt64PtrTy, "vecref_ptr_cast");
       Value* Index32 = E2V;
-
-      // Calculate offset: (index + 1) * 8 bytes. Index needs to be i64 for GEP.
       Value* Index64 = Builder.CreateSExt(Index32, LLVMInt64Ty, "idx64");
       Value* Offset = Builder.CreateNSWAdd(Index64, ConstantInt::get(LLVMInt64Ty, 1), "offset_base");
       Value* ElementPtr = Builder.CreateGEP(LLVMInt64Ty, VecPtr, Offset, "elemptr");
-
-      // Load the value (assuming stored as i64)
       Value* LoadedVal64 = Builder.CreateLoad(LLVMInt64Ty, ElementPtr, "load_elem");
-
-      // Cast the loaded i64 value back to the expected ResultLLVMType
-      if (ResultLLVMType->isIntegerTy(1)) {
-          V = Builder.CreateTrunc(LoadedVal64, LLVMInt1Ty, "elem_as_bool");
-      } else if (ResultLLVMType->isIntegerTy(32)) {
-          V = Builder.CreateTrunc(LoadedVal64, LLVMInt32Ty, "elem_as_int32");
-      } else if (ResultLLVMType->isPointerTy()) {
-          V = Builder.CreateIntToPtr(LoadedVal64, ResultLLVMType, "elem_as_ptr");
-      } else if (ResultLLVMType->isIntegerTy(64)) {
-          V = LoadedVal64; // No cast needed if expecting i64
-      }
-      else {
-           llvm::errs() << "Codegen Error (vector-ref): Cannot cast loaded element to expected type " << *ResultLLVMType << "\n";
-           V = llvm::Constant::getNullValue(ResultLLVMType); return;
-      }
+      if (ResultLLVMType->isIntegerTy(1)) { V = Builder.CreateTrunc(LoadedVal64, LLVMInt1Ty, "elem_as_bool"); }
+      else if (ResultLLVMType->isIntegerTy(32)) { V = Builder.CreateTrunc(LoadedVal64, LLVMInt32Ty, "elem_as_int32"); }
+      else if (ResultLLVMType->isPointerTy()) { V = Builder.CreateIntToPtr(LoadedVal64, ResultLLVMType, "elem_as_ptr"); }
+      else if (ResultLLVMType->isIntegerTy(64)) { V = LoadedVal64; }
+      else { llvm::errs() << "Codegen Error (vector-ref): Cannot cast loaded element to expected type " << *ResultLLVMType << "\n"; V = llvm::Constant::getNullValue(ResultLLVMType); return; }
       break;
   }
   case TokenKind::vector_setb: {
         if (!E1V || !E1V->getType()->isPointerTy()) { llvm::errs() << "Codegen Type Error (vector-set!): Expected pointer type for vector.\n"; V = LLVMInt32Zero; return; }
         if (!E2V || E2V->getType() != LLVMInt32Ty) { llvm::errs() << "Codegen Type Error (vector-set!): Expected i32 for index.\n"; V = LLVMInt32Zero; return; }
         if (!E3V) { llvm::errs() << "Codegen Error (vector-set!): Null value operand.\n"; V = LLVMInt32Zero; return; }
-
         Value* VecPtr = Builder.CreatePointerCast(E1V, LLVMInt64PtrTy, "vecset_ptr_cast");
         Value* Index32 = E2V;
         Value* ValueToStore = E3V;
-
-        // Cast value to store to i64 if needed
-        if (ValueToStore->getType()->isIntegerTy(1)) {
-             ValueToStore = Builder.CreateZExt(ValueToStore, LLVMInt64Ty, "set_boolto64");
-        } else if (ValueToStore->getType()->isIntegerTy(32)) {
-             ValueToStore = Builder.CreateSExt(ValueToStore, LLVMInt64Ty, "set_int32to64");
-        } else if (ValueToStore->getType()->isPointerTy()) {
-             ValueToStore = Builder.CreatePtrToInt(ValueToStore, LLVMInt64Ty, "set_ptrto64");
-        }
-
-        if (ValueToStore->getType() != LLVMInt64Ty){
-             llvm::errs() << "Codegen Error (vector-set!): Cannot store non-i64 type. Type: " << *ValueToStore->getType() << "\n";
-             V = LLVMInt32Zero; return;
-        }
-
-
-        // Calculate offset: (index + 1) * 8 bytes
+        if (ValueToStore->getType()->isIntegerTy(1)) { ValueToStore = Builder.CreateZExt(ValueToStore, LLVMInt64Ty, "set_boolto64"); }
+        else if (ValueToStore->getType()->isIntegerTy(32)) { ValueToStore = Builder.CreateSExt(ValueToStore, LLVMInt64Ty, "set_int32to64"); }
+        else if (ValueToStore->getType()->isPointerTy()) { ValueToStore = Builder.CreatePtrToInt(ValueToStore, LLVMInt64Ty, "set_ptrto64"); }
+        if (ValueToStore->getType() != LLVMInt64Ty){ llvm::errs() << "Codegen Error (vector-set!): Cannot store non-i64 type. Type: " << *ValueToStore->getType() << "\n"; V = LLVMInt32Zero; return; }
         Value* Index64 = Builder.CreateSExt(Index32, LLVMInt64Ty, "idx64");
         Value* Offset = Builder.CreateNSWAdd(Index64, ConstantInt::get(LLVMInt64Ty, 1), "offset_base");
         Value* ElementPtr = Builder.CreateGEP(LLVMInt64Ty, VecPtr, Offset, "elemptr");
-
-        // Store the value
         Builder.CreateStore(ValueToStore, ElementPtr);
-
-        V = LLVMInt32Zero; // vector-set! returns void (represented as i32 0)
+        V = LLVMInt32Zero; // vector-set! returns void
         break;
   }
   // --- END VECTOR OPERATIONS ---
@@ -239,7 +198,6 @@ void ToIRVisitor::visit(Prim &Node) {
       V = Builder.CreateZExt(V, LLVMInt32Ty, "prim_fixup");
     else if (ResultLLVMType == LLVMInt1Ty && V->getType() == LLVMInt32Ty)
       V = Builder.CreateICmpNE(V, LLVMInt32Zero, "prim_fixup");
-    // Add more fixups if needed...
     else {
       llvm::errs() << " -- Cannot fixup.\n";
       V = llvm::Constant::getNullValue(ResultLLVMType);

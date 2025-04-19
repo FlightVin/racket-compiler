@@ -1,0 +1,228 @@
+#!/bin/bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+# Define the target directory
+TEST_DIR="tests/tuples_new"
+
+# Create the directory if it doesn't exist
+echo "Creating directory $TEST_DIR..."
+mkdir -p "$TEST_DIR"
+
+# --- Test Case Generation ---
+
+# Test 01: Simple creation and reference (From EOC)
+cat << EOF > "$TEST_DIR/eoc_fig6.1_mod.rkt"
+(let ([t (vector 40 #t (vector 2))])
+(if (vector-ref t 1)
+(+ (vector-ref t 0)
+(vector-ref (vector-ref t 2) 0))
+44))
+EOF
+cat << EOF > "$TEST_DIR/eoc_fig6.1_mod.rkt.out"
+42
+EOF
+
+# Test 02: Aliasing and eq? (From EOC)
+cat << EOF > "$TEST_DIR/eoc_fig6.1_alias.rkt"
+(let ([t1 (vector 3 7)])
+(let ([t2 t1])
+(let ([t3 (vector 3 7)])
+(if (and (eq? t1 t2) (not (eq? t1 t3)))
+42
+0))))
+EOF
+cat << EOF > "$TEST_DIR/eoc_fig6.1_alias.rkt.out"
+42
+EOF
+
+# Test 03: Aliasing and vector-set! (From EOC)
+cat << EOF > "$TEST_DIR/eoc_fig6.1_alias_set.rkt"
+(let ([t1 (vector 3 7)])
+(let ([t2 t1])
+(let ([_ (vector-set! t2 0 42)])
+(vector-ref t1 0))))
+EOF
+cat << EOF > "$TEST_DIR/eoc_fig6.1_alias_set.rkt.out"
+42
+EOF
+
+# Test 04: Basic vector-length
+cat << EOF > "$TEST_DIR/length_basic.rkt"
+(vector-length (vector 10 20 30))
+EOF
+cat << EOF > "$TEST_DIR/length_basic.rkt.out"
+3
+EOF
+
+# Test 05: vector-length on empty vector
+cat << EOF > "$TEST_DIR/length_empty.rkt"
+(vector-length (vector))
+EOF
+cat << EOF > "$TEST_DIR/length_empty.rkt.out"
+0
+EOF
+
+# Test 06: vector-ref basic
+cat << EOF > "$TEST_DIR/ref_basic.rkt"
+(let ([v (vector #f 99 #t)])
+    (vector-ref v 1))
+EOF
+cat << EOF > "$TEST_DIR/ref_basic.rkt.out"
+99
+EOF
+
+# Test 07: vector-set! basic
+cat << EOF > "$TEST_DIR/set_basic.rkt"
+(let ([v (vector 1 2)])
+  (begin
+    (vector-set! v 0 55)
+    (vector-ref v 0)))
+EOF
+cat << EOF > "$TEST_DIR/set_basic.rkt.out"
+55
+EOF
+
+# Test 08: Nested vectors
+cat << EOF > "$TEST_DIR/nested.rkt"
+(vector-ref (vector-ref (vector 10 (vector 20 30)) 1) 1)
+EOF
+cat << EOF > "$TEST_DIR/nested.rkt.out"
+30
+EOF
+
+# Test 09: Mixed types
+cat << EOF > "$TEST_DIR/mixed_types.rkt"
+(let ([v (vector 1 #t (vector 3))])
+    (vector-length v))
+EOF
+cat << EOF > "$TEST_DIR/mixed_types.rkt.out"
+3
+EOF
+
+# Test 10: Let binding vector
+cat << EOF > "$TEST_DIR/let_bind.rkt"
+(let ([myvec (vector 5 6)])
+    (vector-ref myvec 0))
+EOF
+cat << EOF > "$TEST_DIR/let_bind.rkt.out"
+5
+EOF
+
+# Test 11: If returning vectors
+cat << EOF > "$TEST_DIR/if_return.rkt"
+(vector-length (if #t (vector 1 2) (vector 3 4 5)))
+EOF
+cat << EOF > "$TEST_DIR/if_return.rkt.out"
+2
+EOF
+
+# Test 12: Read values and put in vector
+cat << EOF > "$TEST_DIR/read_populate.rkt"
+(let ([v (vector 0 0)])
+    (begin
+        (vector-set! v 0 (read))
+        (vector-set! v 1 (read))
+        (vector-ref v 1)
+    )
+)
+EOF
+cat << EOF > "$TEST_DIR/read_populate.rkt.in"
+11
+22
+EOF
+cat << EOF > "$TEST_DIR/read_populate.rkt.out"
+22
+EOF
+
+# Test 13: Use vector after aliased set
+cat << EOF > "$TEST_DIR/alias_set_use.rkt"
+(let ([v1 (vector 10 20)])
+  (let ([v2 v1])
+    (begin
+      (vector-set! v2 1 99)
+      (+ (vector-ref v1 0) (vector-ref v1 1))
+    )))
+EOF
+cat << EOF > "$TEST_DIR/alias_set_use.rkt.out"
+109
+EOF
+
+# --- Error Cases ---
+
+# Test 14: vector-ref index out of bounds (positive)
+cat << EOF > "$TEST_DIR/err_ref_oob_pos.rkt"
+(vector-ref (vector 1 2) 2)
+EOF
+touch "$TEST_DIR/err_ref_oob_pos.rkt.err"
+
+# Test 15: vector-ref index out of bounds (negative - should fail parsing or lexing, but test sema if it gets through)
+# NOTE: Current parser likely fails this before Sema. If parser updated, Sema should catch negative literal.
+cat << EOF > "$TEST_DIR/err_ref_oob_neg.rkt"
+(vector-ref (vector 1 2) -1)
+EOF
+touch "$TEST_DIR/err_ref_oob_neg.rkt.err"
+
+# Test 16: vector-ref on non-vector
+cat << EOF > "$TEST_DIR/err_ref_nonvec.rkt"
+(vector-ref 123 0)
+EOF
+touch "$TEST_DIR/err_ref_nonvec.rkt.err"
+
+# Test 17: vector-set! index out of bounds
+cat << EOF > "$TEST_DIR/err_set_oob.rkt"
+(vector-set! (vector #t) 1 #f)
+EOF
+touch "$TEST_DIR/err_set_oob.rkt.err"
+
+# Test 18: vector-set! on non-vector
+cat << EOF > "$TEST_DIR/err_set_nonvec.rkt"
+(vector-set! 5 0 10)
+EOF
+touch "$TEST_DIR/err_set_nonvec.rkt.err"
+
+# Test 19: vector-set! type mismatch
+cat << EOF > "$TEST_DIR/err_set_typemismatch.rkt"
+(let ([v (vector 10)]) (vector-set! v 0 #t))
+EOF
+touch "$TEST_DIR/err_set_typemismatch.rkt.err"
+
+# Test 20: vector-length on non-vector
+cat << EOF > "$TEST_DIR/err_length_nonvec.rkt"
+(vector-length #f)
+EOF
+touch "$TEST_DIR/err_length_nonvec.rkt.err"
+
+# Test 21: eq? comparing vector and non-vector
+cat << EOF > "$TEST_DIR/err_eq_mixed.rkt"
+(eq? (vector 1) 1)
+EOF
+touch "$TEST_DIR/err_eq_mixed.rkt.err"
+
+# Test 22: (read) as vector element (Sema error)
+cat << EOF > "$TEST_DIR/err_read_element.rkt"
+(vector 1 (read) 3)
+EOF
+touch "$TEST_DIR/err_read_element.rkt.err"
+
+# Test 23: vector-ref with non-literal index (Parser error)
+cat << EOF > "$TEST_DIR/err_ref_nonliteral_idx.rkt"
+(let ([v (vector 1 2)]) (let ([x 1]) (vector-ref v x)))
+EOF
+touch "$TEST_DIR/err_ref_nonliteral_idx.rkt.err"
+
+# Test 24: vector-set! with non-literal index (Parser error)
+cat << EOF > "$TEST_DIR/err_set_nonliteral_idx.rkt"
+(let ([v (vector 1 2)]) (let ([x 0]) (vector-set! v x 99)))
+EOF
+touch "$TEST_DIR/err_set_nonliteral_idx.rkt.err"
+
+# Test 25: eq? comparing two different vector types (Sema error)
+cat << EOF > "$TEST_DIR/err_eq_vec_mismatch.rkt"
+(eq? (vector 1) (vector #t))
+EOF
+touch "$TEST_DIR/err_eq_vec_mismatch.rkt.err"
+
+
+echo "Test files generated in $TEST_DIR"

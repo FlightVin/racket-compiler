@@ -3,9 +3,9 @@
 #include "llracket/Basic/Type.h" // Include new Type definitions
 #include "llracket/Lexer/Token.h"
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/APSInt.h" // Still needed if comparing signed integers, but not for index parsing
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/Support/Casting.h" // For dyn_cast
+#include "llvm/Support/Casting.h" // For dyn_cast, isa
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -102,27 +102,42 @@ void TypeCheckVisitor::visit(Prim &Node) {
        if (T1 == ReadPlaceholderType::get() && T2 == ReadPlaceholderType::get()) {
            reportError(getLoc(&Node), diag::err_cannot_infer_type, "'eq?' with two reads"); OpError = true;
        } else if (T1 == ReadPlaceholderType::get()) {
-           if (T2 == IntegerType::get() || T2 == BooleanType::get()) { T1 = T2; recordType(E1, T1); }
-           else { reportError(getLoc(E2), diag::err_invalid_operands, "eq?", "Cannot infer 'read' type from " + T2->getName()); OpError = true; }
+            // Infer based on T2 only if T2 is comparable
+            if (T2 == IntegerType::get() || T2 == BooleanType::get() || T2 == VoidType::get() || isa<VectorType>(T2)) {
+                T1 = T2; recordType(E1, T1);
+            } else {
+                reportError(getLoc(E2), diag::err_invalid_operands, "eq?", "Cannot infer 'read' type from " + T2->getName()); OpError = true;
+            }
        } else if (T2 == ReadPlaceholderType::get()) {
-           if (T1 == IntegerType::get() || T1 == BooleanType::get()) { T2 = T1; recordType(E2, T2); }
-           else { reportError(getLoc(E1), diag::err_invalid_operands, "eq?", "Cannot infer 'read' type from " + T1->getName()); OpError = true; }
+            // Infer based on T1 only if T1 is comparable
+             if (T1 == IntegerType::get() || T1 == BooleanType::get() || T1 == VoidType::get() || isa<VectorType>(T1)) {
+                T2 = T1; recordType(E2, T2);
+            } else {
+                reportError(getLoc(E1), diag::err_invalid_operands, "eq?", "Cannot infer 'read' type from " + T1->getName()); OpError = true;
+            }
        }
 
+       // Perform comparison only if no inference error occurred
        if (!OpError) {
-           if (T1->equals(T2)) {
-               // Allow comparison for Integer, Boolean. Disallow for Void, Vector.
-               if (T1 == IntegerType::get() || T1 == BooleanType::get()) {
+           if (T1->equals(T2)) { // Check if types are equal *after* inference
+               // Allow comparison for Integer, Boolean, Void, Vector (pointer equality)
+               if (T1 == IntegerType::get() || T1 == BooleanType::get() || T1 == VoidType::get() || isa<VectorType>(T1)) {
                    resultType = BooleanType::get();
                } else {
-                   reportError(getLoc(E1 ? E1 : &Node), diag::err_invalid_operands, "eq?", "Integer or Boolean, but got " + T1->getName()); OpError = true;
+                   // Error: eq? not defined for this type (e.g., ErrorType itself)
+                   reportError(getLoc(E1 ? E1 : &Node), diag::err_invalid_operands, "eq?",
+                              "Integer, Boolean, Void, or Vector, but got " + T1->getName());
+                   OpError = true;
                }
            } else {
-               reportTypeError(getLoc(E2 ? E2 : &Node), T1, T2, "in 'eq?' comparison"); OpError = true;
+               // Types are not equal, report mismatch
+               reportTypeError(getLoc(E2 ? E2 : &Node), T1, T2, "in 'eq?' comparison");
+               OpError = true;
            }
        }
   } else { reportOperandCountError(2); }
   break;
+
 
   case TokenKind::and_: case TokenKind::or_:
     if (E1 && E2 && !E3) {
