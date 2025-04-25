@@ -5,7 +5,13 @@
 #include "llracket/Basic/Diagnostic.h"
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <utility> // For std::pair
 #include <vector>
+
+// Forward declare Type class from Basic/Type.h
+namespace llracket {
+class Type;
+}
 
 class Parser {
   Lexer &Lex;
@@ -31,7 +37,10 @@ class Parser {
 
   bool expect(TokenKind Kind) {
     if (Tok.getKind() != Kind) {
-      error(Kind);
+      // Report specific error using Diags
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
+                   tok::getTokenName(Kind));
+      error(Kind); // Keep internal tracking if needed
       return false;
     }
     return true;
@@ -44,8 +53,13 @@ class Parser {
     return true;
   }
 
+  // --- Parsing Methods ---
   Expr *parseExpr();
   Let *parseLetExpr();
+  // --- L_Fun Additions ---
+  Def *parseDef();   // <<< ADDED Declaration
+  Type *parseType(); // <<< ADDED Declaration
+  // --- End L_Fun Additions ---
 
 public:
   Parser(Lexer &Lex, DiagnosticsEngine &Diags) : Lex(Lex), Diags(Diags) {
@@ -57,6 +71,8 @@ public:
   template <class... Tokens> void skipUntil(Tokens... Toks) {
     std::unordered_set<tok::TokenKind> Skipset = {tok::eof, Toks...};
     while (true) {
+      if (Tok.getKind() == tok::eof)
+        break; // Stop at EOF always
       if (Skipset.count(Tok.getKind())) {
         break;
       }
@@ -64,4 +80,4 @@ public:
     }
   }
 };
-#endif
+#endif // LLRACKET_PARSER_PARSER_H
