@@ -52,7 +52,7 @@ llracket::Type *Parser::parseType() {
     } else if (Tok.is(tok::l_paren) || Tok.is(tok::identifier) ||
                Tok.is(tok::minus)) {
       std::vector<llracket::Type *> paramTypes;
-      while (!Tok.is(tok::minus) && !Tok.is(tok::eof)) {
+      while (!Tok.is(tok::arrow) && !Tok.is(tok::eof)) {
         if (Tok.is(tok::r_paren)) {
           Diags.report(Tok.getLocation(), diag::err_unexpected_token,
                        Tok.getText(), "'->' or parameter type");
@@ -64,20 +64,12 @@ llracket::Type *Parser::parseType() {
         }
         paramTypes.push_back(paramType);
 
-        if (Tok.is(tok::minus)) {
-          Token peekTok = Lex.peek(1); // Assumes peek exists and works
-          if (peekTok.is(tok::gt))
-            break;
-          Diags.report(Tok.getLocation(), diag::err_unexpected_token,
-                       Tok.getText(),
-                       "'>' after '-' or another parameter type");
-          return nullptr;
+        if (Tok.is(tok::arrow)) {
+          break;
         }
       }
 
-      if (!consume(tok::minus))
-        return nullptr;
-      if (!consume(tok::gt))
+      if (!consume(tok::arrow))
         return nullptr;
 
       llracket::Type *returnType = parseType();

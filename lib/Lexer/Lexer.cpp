@@ -175,7 +175,12 @@ void Lexer::next(Token &token) {
     formToken(token, startPtr + 1, TokenKind::plus);
     break;
   case '-':
-    formToken(token, startPtr + 1, TokenKind::minus);
+    // Check for -> token
+    if (*(startPtr + 1) == '>') {
+        formToken(token, startPtr + 2, TokenKind::arrow);
+    } else {
+        formToken(token, startPtr + 1, TokenKind::minus);
+    }
     break; // Handles "-" operator if not followed by digit
   case '<':
     if (*(startPtr + 1) == '=')

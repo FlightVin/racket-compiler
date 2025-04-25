@@ -34,7 +34,8 @@ PUNCTUATOR(vector, "vector")
 PUNCTUATOR(vector_length, "vector-length")
 PUNCTUATOR(vector_ref, "vector-ref")
 PUNCTUATOR(vector_setb, "vector-set!")
-PUNCTUATOR(colon, ":")                 // <<< ADDED
+PUNCTUATOR(colon, ":")                 
+PUNCTUATOR(arrow, "->")
 
 // Keywords with feature flags
 KEYWORD(let, KEYALL)
