@@ -1,6 +1,7 @@
 add_library(
     llracketSema
     Sema.cpp
+    SemaFun.cpp
     SemaProgram.cpp
     SemaLiteralsVars.cpp
     SemaBindingScope.cpp
