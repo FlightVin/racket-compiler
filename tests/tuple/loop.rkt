@@ -3,6 +3,6 @@
     (begin
       (while (< i 3)
         (begin
-          (vector-set! v i (+ (vector-ref v i) 10))
+          (vector-set! v 0 (+ (vector-ref v 0) 10))
           (set! i (+ i 1))))
       (vector-ref v 2))))
