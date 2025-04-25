@@ -27,7 +27,9 @@ void ToIRVisitor::run(AST *Tree) {
   BasicBlock *BB = BasicBlock::Create(Ctx, "entry", MainFn);
   Builder.SetInsertPoint(BB);
 
-  // --- MODIFICATION START ---
+  // Store the current function being built ('main')
+  CurrentFunction = MainFn; // <<< SET CurrentFunction
+
   // Store the current insert block for main's entry
   BasicBlock *mainEntryBB = BB;
 
@@ -35,15 +37,18 @@ void ToIRVisitor::run(AST *Tree) {
   // come back to generate the code for the main expression inside main.
   Tree->accept(*this);
 
-  // Ensure the builder is pointing back to the main function's exit path
-  // IF visit(Program&) didn't leave it there.
-  // This logic might need refinement based on visit(Program&) implementation.
-  if (Builder.GetInsertBlock()->getParent() != MainFn) {
-    Builder.SetInsertPoint(mainEntryBB); // Or a dedicated exit block for main
-    // This case indicates an issue in visit(Program) flow.
-    llvm::errs() << "Codegen WARNING: Builder context lost after Program "
-                    "visit. Returning default from main.\n";
-    Builder.CreateRet(LLVMInt32Zero);
+  // After visiting the program, we should be back in the main function's
+  // context
+  if (!CurrentFunction || CurrentFunction != MainFn) {
+    llvm::errs()
+        << "Codegen Error: Function context mismatch after visiting Program.\n";
+    // Attempt to recover by setting back to main, but this indicates a deeper
+    // issue.
+    CurrentFunction = MainFn;
+    Builder.SetInsertPoint(mainEntryBB); // Or main's designated exit block
+    if (!Builder.GetInsertBlock()->getTerminator()) {
+      Builder.CreateRet(LLVMInt32Zero);
+    }
   } else if (!Builder.GetInsertBlock()->getTerminator()) {
     // If visit(Program&) generated the main expression code but didn't
     // terminate the block
@@ -52,43 +57,43 @@ void ToIRVisitor::run(AST *Tree) {
     Builder.CreateRet(
         LLVMInt32Zero); // Default exit code if main expression logic failed
   }
-  // --- MODIFICATION END ---
+  CurrentFunction = nullptr; // Clear current function after main is done
 
   if (verifyFunction(*MainFn, &errs())) {
     llvm::errs() << "LLVM Function verification failed for main.\n";
-    // Consider dumping module for debugging
-    // M->dump();
+    // M->dump(); // Optional: Dump module on verification failure
   }
 }
 
+// --- MODIFIED: visit(Program&) ---
 void ToIRVisitor::visit(Program &Node) {
   // --- Generate Code for Function Definitions ---
   const auto &defs = Node.getDefs();
   for (Def *d : defs) {
     if (d) {
-      // TODO: Implement visit(Def&) to generate LLVM Functions
-      // d->accept(*this); // This will call the (to be implemented) visit(Def&)
-      llvm::errs() << "Codegen WARNING: visit(Def&) not implemented yet.\n";
+      // This will call the (to be implemented) visit(Def&)
+      d->accept(*this);
     }
   }
 
   // --- Generate Code for the Main Expression (within the 'main' function) ---
   Expr *mainExpr = Node.getMainExpr();
-  Function *MainFn = M->getFunction("main");
+  Function *MainFn = M->getFunction("main"); // Should exist, created in run()
   if (!MainFn) {
     llvm::report_fatal_error(
         "CodeGen Error: 'main' function not found during Program visit.");
     return;
   }
   // Ensure we are inserting into the 'main' function's entry block (or current
-  // block if structure allows) It's assumed run() already set the insert point
-  // into main's entry block before calling this.
-  if (Builder.GetInsertBlock()->getParent() != MainFn) {
-    llvm::errs() << "Codegen Error: Builder not inside 'main' function when "
-                    "generating main expression.\n";
-    // Attempt to recover?
-    Builder.SetInsertPoint(
-        &MainFn->getEntryBlock()); // Risky if entry block has content
+  // block if structure allows) run() should have set the builder correctly.
+  // Set CurrentFunction to main before visiting its body.
+  CurrentFunction = MainFn;
+  // If main's entry block doesn't exist or builder isn't in main, reset it.
+  if (MainFn->empty() || Builder.GetInsertBlock()->getParent() != MainFn) {
+    if (MainFn->empty()) {
+      BasicBlock::Create(Ctx, "entry", MainFn);
+    }
+    Builder.SetInsertPoint(&MainFn->getEntryBlock());
   }
 
   if (mainExpr) {
@@ -115,61 +120,52 @@ void ToIRVisitor::visit(Program &Node) {
       finalV = llvm::Constant::getNullValue(expectedLLVMType ? expectedLLVMType
                                                              : LLVMInt32Ty);
     } else if (finalV->getType() != expectedLLVMType) {
-      llvm::errs() << "Codegen Warning: Type mismatch for main expression "
-                      "result. Expected "
-                   << *expectedLLVMType << ", got " << *finalV->getType()
-                   << ". Attempting cast/fix.\n";
-      // Basic fixups (add more as needed)
+      // Handle type mismatches, similar to how it was done before
+      // This part becomes less critical if main *must* return Int32
       if (expectedLLVMType == LLVMInt32Ty && finalV->getType() == LLVMInt1Ty) {
         finalV = Builder.CreateZExt(finalV, LLVMInt32Ty, "main_bool2int");
       } else if (expectedLLVMType == LLVMInt1Ty &&
                  finalV->getType() == LLVMInt32Ty) {
         finalV = Builder.CreateICmpNE(finalV, LLVMInt32Zero, "main_int2bool");
       } else {
-        llvm::errs()
-            << " -- Cannot fixup main expression result type. Using default.\n";
+        llvm::errs() << "Codegen Warning: Type mismatch for main expression "
+                        "result. Expected "
+                     << *expectedLLVMType << ", got " << *finalV->getType()
+                     << ". Using default.\n";
         finalV = llvm::Constant::getNullValue(expectedLLVMType);
       }
     }
 
-    // --- Generate Write Call (based on Racket semantics) ---
-    // In L_Fun, the main expression's value becomes the program's result,
-    // typically interpreted as an exit code (Integer). We still might want
-    // to print it for consistency with previous labs or debugging.
+    // --- Generate Write Call & Return ---
+    // Main should return the integer result as the exit code.
     if (finalType == IntegerType::get()) {
+      // Optional: Print the result before returning
       Function *WriteFn = getOrDeclareWriteInt();
       Builder.CreateCall(WriteFn, {finalV});
-      // The actual return for 'main' should be the integer value itself
-      if (Builder.GetInsertBlock()->getTerminator() ==
-          nullptr) { // Avoid adding ret if block already terminated
+
+      // Return the integer value
+      if (Builder.GetInsertBlock()->getTerminator() == nullptr) {
         Builder.CreateRet(finalV);
-      } else {
-        llvm::errs() << "Codegen Warning: Block already terminated before "
-                        "final return in main.\n";
       }
-    } else if (finalType == BooleanType::get()) {
-      // Print boolean, but return integer exit code (e.g., 0 for #t, 1 for #f?)
-      Value *boolAsInt =
-          Builder.CreateZExt(finalV, LLVMInt32Ty, "main_bool2int_for_write");
-      Function *WriteFn = getOrDeclareWriteBool();
-      Builder.CreateCall(WriteFn, {boolAsInt});
+    } else {
+      // If main expression doesn't yield an integer, print based on type
+      // (optional) but return a default exit code (e.g., 1 for error, 0
+      // otherwise)
+      llvm::errs() << "Codegen Warning: Main expression type is "
+                   << finalType->getName()
+                   << ", not Integer. Returning default exit code.\n";
+      if (finalType == BooleanType::get()) {
+        Value *boolAsInt =
+            Builder.CreateZExt(finalV, LLVMInt32Ty, "main_bool2int_for_write");
+        Function *WriteFn = getOrDeclareWriteBool();
+        Builder.CreateCall(WriteFn, {boolAsInt});
+      } else if (finalType == VoidType::get()) {
+        // Nothing to print
+      } // Add other types if needed
+
       if (Builder.GetInsertBlock()->getTerminator() == nullptr) {
-        // Return 0 if #t, 1 if #f (example convention)
-        Value *exitCode = Builder.CreateSelect(
-            finalV, LLVMInt32Zero, LLVMInt32One, "exitcode_from_bool");
-        Builder.CreateRet(exitCode);
-      }
-    } else if (finalType == VoidType::get()) {
-      // No write call for void, return default exit code 0
-      if (Builder.GetInsertBlock()->getTerminator() == nullptr) {
-        Builder.CreateRet(LLVMInt32Zero);
-      }
-    } else { // Add cases for Vector etc. later if they can be main results
-      llvm::errs() << "Codegen: Unhandled final main expression type for "
-                      "printing/exit code: "
-                   << finalType->getName() << ". Returning default 0.\n";
-      if (Builder.GetInsertBlock()->getTerminator() == nullptr) {
-        Builder.CreateRet(LLVMInt32Zero);
+        Builder.CreateRet(
+            LLVMInt32One); // Return 1 to indicate non-integer result? Or 0?
       }
     }
 
@@ -180,6 +176,7 @@ void ToIRVisitor::visit(Program &Node) {
       Builder.CreateRet(LLVMInt32Zero); // Default exit code
     }
   }
+  // CurrentFunction context will be reset by the caller (run)
 }
 
 // --- Runtime Helper Function Implementations (Now Methods) ---

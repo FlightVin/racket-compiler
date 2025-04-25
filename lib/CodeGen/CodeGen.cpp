@@ -3,13 +3,16 @@
 #include "llracket/AST/AST.h"
 #include "llracket/Basic/Type.h"  // Include new Type definitions
 #include "llvm/IR/DerivedTypes.h" // Needed for PointerType, FunctionType
-#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Function.h"     // For Function
+#include "llvm/IR/IRBuilder.h"    // Builder lives here now
+#include "llvm/IR/Instructions.h" // For AllocaInst, CallInst
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector> // For FunctionType params
 
 using namespace llvm;
 using namespace llracket;
@@ -24,9 +27,9 @@ void CodeGen::compile(AST *Tree) {
   ToIRVisitor ToIR(M, *ExprTypes);
   ToIR.run(Tree);
 
-  if (verifyModule(*M, &errs())) {
+  if (verifyModule(*M, &llvm::errs())) { // Pass errs() for detailed output
     llvm::errs() << "LLVM Module verification failed after CodeGen.\n";
-    // M->dump(); // Optional: Dump module on verification failure
+    M->print(llvm::errs(), nullptr); // Dump module on verification failure
   }
 }
 // --- ToIRVisitor Constructor Implementation ---
@@ -54,8 +57,9 @@ ToIRVisitor::ToIRVisitor(Module *Mod,
 // --- Helper Method Implementations ---
 llvm::Type *ToIRVisitor::getLLVMType(Type *T) {
   if (!T) {
-    llvm::errs() << "Warning: Null Type encountered during LLVM type lookup. "
-                    "Defaulting to Int32.\n";
+    llvm::errs()
+        << "Warning: Null llracket::Type encountered during LLVM type lookup. "
+           "Defaulting to Int32.\n";
     return LLVMInt32Ty;
   }
   switch (T->getKind()) {
@@ -64,52 +68,74 @@ llvm::Type *ToIRVisitor::getLLVMType(Type *T) {
   case TypeKind::Boolean:
     return LLVMInt1Ty;
   case TypeKind::Void:
-    return LLVMInt32Ty; // Represent Void internally with i32
+    return LLVMInt32Ty; // Represent Void internally with i32 (for returns/vars)
   case TypeKind::Vector:
     return LLVMInt64PtrTy; // Vectors are pointers to i64 (tag + elements)
   case TypeKind::Function:
-    return LLVMInt64PtrTy; // <<< ADDED: Functions (closures) represented as
-                           // pointers (to closure struct/vector)
+    return LLVMInt64PtrTy; // Functions (closures) represented as pointers
+                           // (i64*)
   case TypeKind::Error:
-  case TypeKind::ReadPlaceholder: // Should be resolved before codegen
+  case TypeKind::ReadPlaceholder:
     llvm::errs() << "Warning: Encountered Error/Placeholder type during LLVM "
                     "type lookup. Defaulting to Int32.\n";
-    return LLVMInt32Ty;
+    return LLVMInt32Ty; // Use i32 as a fallback for errors
   }
   llvm_unreachable("Invalid TypeKind for getLLVMType");
 }
 
+// --- NEW HELPER: getLLVMFunctionType ---
+llvm::FunctionType *ToIRVisitor::getLLVMFunctionType(FunctionType *FTy) {
+  if (!FTy) {
+    llvm::errs() << "Error: Cannot get LLVM type for null FunctionType.\n";
+    // Return a default function type? e.g., void() -> void? Or handle error?
+    return llvm::FunctionType::get(LLVMVoidTy, false); // Placeholder
+  }
+  // Convert llracket::Type* return type to llvm::Type*
+  // Note: Racket void returns i32 in our convention
+  llvm::Type *llvmReturnType = getLLVMType(FTy->getReturnType());
+
+  // Convert llracket::Type* parameter types to llvm::Type*
+  std::vector<llvm::Type *> llvmParamTypes;
+  llvmParamTypes.reserve(FTy->getParamTypes().size());
+  for (Type *paramTy : FTy->getParamTypes()) {
+    llvmParamTypes.push_back(getLLVMType(paramTy));
+  }
+
+  return llvm::FunctionType::get(llvmReturnType, llvmParamTypes, false);
+}
+// --- END NEW HELPER ---
+
 llvm::PointerType *ToIRVisitor::getLLVMPtrType(Type *T) {
   if (!T) {
-    llvm::errs()
-        << "Warning: Null Type encountered for Alloca, defaulting to Int32*\n";
-    return LLVMInt32PtrTy;
-  }
-  switch (T->getKind()) {
-  case TypeKind::Integer:
-    return LLVMInt32PtrTy;
-  case TypeKind::Boolean:
-    return LLVMInt1PtrTy;
-  case TypeKind::Void:
-    return LLVMInt32PtrTy; // Store void representation as i32*
-  case TypeKind::Vector:
-    return llvm::PointerType::getUnqual(
-        LLVMInt64PtrTy); // Store pointer to vector (i64*)
-  case TypeKind::Function:
-    return llvm::PointerType::getUnqual(
-        LLVMInt64PtrTy); // <<< ADDED: Store pointer to closure (i64*)
-  case TypeKind::Error:
-  case TypeKind::ReadPlaceholder:
-    llvm::errs() << "Warning: Error/Placeholder type encountered for Alloca, "
+    llvm::errs() << "Warning: Null llracket::Type encountered for Alloca, "
                     "defaulting to Int32*\n";
     return LLVMInt32PtrTy;
   }
-  llvm_unreachable("Invalid TypeKind for getLLVMPtrType");
+  llvm::Type *baseLLVMType = getLLVMType(T);
+  return llvm::PointerType::getUnqual(baseLLVMType);
 }
+
+// --- NEW HELPER: CreateEntryBlockAlloca ---
+// Creates an alloca instruction in the entry block of the current function.
+// Used for allocating space for parameters and local variables.
+llvm::AllocaInst *ToIRVisitor::CreateEntryBlockAlloca(llvm::Type *Ty,
+                                                      const llvm::Twine &Name) {
+  if (!CurrentFunction) {
+    llvm::report_fatal_error("Cannot create alloca: not inside a function.");
+  }
+  // Create a temporary builder pointing to the function's entry block
+  llvm::IRBuilder<> TmpB(
+      &CurrentFunction->getEntryBlock(),
+      CurrentFunction->getEntryBlock().getFirstInsertionPt());
+  return TmpB.CreateAlloca(Ty, nullptr, Name);
+}
+// --- END NEW HELPER ---
 
 // --- Dispatcher Implementation ---
 void ToIRVisitor::visit(Expr &Node) {
   switch (Node.getKind()) {
+    // ... (Keep existing cases: Prim, Int, Var, Let, Bool, If, SetBang, Begin,
+    // WhileLoop, Void, VectorLiteral) ...
   case Expr::ExprPrim:
     llvm::cast<Prim>(Node).accept(*this);
     break;
@@ -143,8 +169,12 @@ void ToIRVisitor::visit(Expr &Node) {
   case Expr::ExprVectorLiteral:
     llvm::cast<VectorLiteral>(Node).accept(*this);
     break;
+  // --- ADDED Case ---
   case Expr::ExprApply:
     llvm::cast<Apply>(Node).accept(*this);
-    break; // Added previously
+    break;
+  // --- END ADDED Case ---
+  default:
+    llvm_unreachable("Unknown Expr kind");
   }
 }
