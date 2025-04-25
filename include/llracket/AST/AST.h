@@ -285,7 +285,7 @@ public:
   StringRef getName() const { return Name; }
   const std::vector<std::pair<StringRef, llracket::Type *>> &getParams() const {
     return Params;
-  }                                                            // <<< QUALIFIED
+  } // <<< QUALIFIED
   llracket::Type *getReturnType() const { return ReturnType; } // <<< QUALIFIED
   Expr *getBody() const { return Body; }
 
