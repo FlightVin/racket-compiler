@@ -5,9 +5,9 @@
         (begin
           (while (< i 3)
             (begin
-              (if (vector-ref flags i)
-                  (vector-set! nums i (+ (vector-ref nums i) 
-                                         (vector-ref (vector-ref combined 2) i)))
+              (if (vector-ref flags 0)
+                  (vector-set! nums 0 (+ (vector-ref nums 0) 
+                                         (vector-ref (vector-ref combined 2) 0)))
                   (void))
               (set! i (+ i 1))))
           (vector-ref nums 2))))))
