@@ -1,0 +1,1 @@
+(let ([v1 (vector 1 2 3)]) (let ([v2 v1]) (eq? v1 v2)))
