@@ -32,35 +32,35 @@ void TypeCheckVisitor::visit(Var &Node) {
 
 // ADDED Implementation for VectorLiteral
 void TypeCheckVisitor::visit(VectorLiteral &Node) {
-    std::vector<Type*> elementTypes;
-    elementTypes.reserve(Node.getElements().size());
-    bool elementError = false;
+  std::vector<Type *> elementTypes;
+  elementTypes.reserve(Node.getElements().size());
+  bool elementError = false;
 
-    for (Expr* elemExpr : Node.getElements()) {
-        if (!elemExpr) {
-             reportError(getLoc(&Node), diag::err_internal_compiler, "Null element in vector literal");
-             elementError = true;
-             elementTypes.push_back(ErrorType::get()); // Add error placeholder
-             continue;
-        }
-        Type* elemType = visitAndGetType(elemExpr);
-        if (!elemType || elemType == ErrorType::get()) {
-            elementError = true; // Error already reported by sub-visit
-            elementTypes.push_back(ErrorType::get());
-        } else if (elemType == ReadPlaceholderType::get()) {
-             // Constraint: (read) cannot be a direct element
-             reportError(getLoc(elemExpr), diag::err_vector_read_element);
-             elementError = true;
-             elementTypes.push_back(ErrorType::get());
-        }
-         else {
-            elementTypes.push_back(elemType);
-        }
+  for (Expr *elemExpr : Node.getElements()) {
+    if (!elemExpr) {
+      reportError(getLoc(&Node), diag::err_internal_compiler,
+                  "Null element in vector literal");
+      elementError = true;
+      elementTypes.push_back(ErrorType::get()); // Add error placeholder
+      continue;
     }
-
-    if (elementError) {
-        recordType(&Node, ErrorType::get());
+    Type *elemType = visitAndGetType(elemExpr);
+    if (!elemType || elemType == ErrorType::get()) {
+      elementError = true; // Error already reported by sub-visit
+      elementTypes.push_back(ErrorType::get());
+    } else if (elemType == ReadPlaceholderType::get()) {
+      // Constraint: (read) cannot be a direct element
+      reportError(getLoc(elemExpr), diag::err_vector_read_element);
+      elementError = true;
+      elementTypes.push_back(ErrorType::get());
     } else {
-        recordType(&Node, VectorType::get(std::move(elementTypes)));
+      elementTypes.push_back(elemType);
     }
+  }
+
+  if (elementError) {
+    recordType(&Node, ErrorType::get());
+  } else {
+    recordType(&Node, VectorType::get(std::move(elementTypes)));
+  }
 }

@@ -3,26 +3,92 @@
 #include "llracket/Lexer/Token.h"
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
-#include <vector> // Ensure vector is included
+#include <utility> // For std::move
+#include <vector>  // Ensure vector is included
 
 using namespace llracket;
 using tok::TokenKind;
 
+// Forward declare parseDef (implementation needed later)
+Def *Parser::parseDef() {
+  // Placeholder: This function needs to be implemented
+  // to parse a full (define (f [x:T]...) : RT body) form.
+  // For now, let's assume it consumes tokens for a definition
+  // and returns nullptr if it's not a definition start,
+  // or reports an error and returns nullptr if parsing fails.
+  if (Tok.is(tok::l_paren)) {
+    Token peekTok = Lex.peek(1); // Need Lexer::peek implemented or simulate
+    if (peekTok.is(tok::kw_define)) {
+      Diags.report(Tok.getLocation(), diag::err_unknown,
+                   "parseDef not implemented yet.");
+      // Consume tokens related to the definition to avoid infinite loop (crude
+      // recovery)
+      advance(); // (
+      advance(); // define
+      skipUntil(tok::r_paren);
+      if (Tok.is(tok::r_paren))
+        advance();
+      return nullptr; // Placeholder return
+    }
+  }
+  return nullptr; // Not a definition
+}
+
 AST *Parser::parse() {
-  Expr *TheExpr = parseExpr();
-  if (!TheExpr) {
+  std::vector<Def *> definitions;
+  ProgramInfo info; // Assuming default ProgramInfo for now
+
+  // --- ADDED: Loop to parse definitions ---
+  while (true) {
+    // Peek or attempt to parse a definition
+    // A more robust way might involve peeking, e.g.,
+    // Lex.peek().is(tok::l_paren) and Lex.peek(1).is(tok::kw_define)
+    Token currentTok =
+        Tok; // Save state in case parseDef fails non-destructively
+    Def *definition = parseDef();
+    if (definition) {
+      definitions.push_back(definition);
+    } else {
+      // If parseDef returned null because it wasn't a definition,
+      // break the loop and parse the main expression.
+      // If parseDef reported an error and returned null, we might
+      // already be in an error state.
+      // Restore token state if parseDef didn't consume tokens or failed early.
+      // This part depends heavily on parseDef's error handling.
+      // For this placeholder, we assume if it returns null, we stop looking for
+      // defs.
+      break;
+    }
+    // Add loop termination/error handling if parseDef fails mid-definition
+  }
+  // --- END ADDED ---
+
+  // --- MODIFIED: Parse the main expression AFTER definitions ---
+  Expr *TheMainExpr = parseExpr();
+  if (!TheMainExpr) {
     // If parseExpr returned null due to errors, return null AST
+    // Need to clean up any parsed definitions if returning early
+    for (Def *d : definitions)
+      delete d; // Basic cleanup
     return nullptr;
   }
-  Program *P = new Program(TheExpr);
+  // --- END MODIFIED ---
+
+  // --- MODIFIED: Construct the new Program node ---
+  Program *P =
+      new Program(std::move(definitions), TheMainExpr, std::move(info));
+  // --- END MODIFIED ---
+
   // llvm::outs() << "Created program" << "\n"; // Debug
   AST *Res = llvm::dyn_cast<AST>(P);
   // llvm::outs() << "Created AST" << "\n"; // Debug
   if (!expect(TokenKind::eof)) {
     Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
-                 "end of file");
+                 "end of file after definitions and main expression");
     // Consider if returning nullptr is appropriate here too, depending on error
-    // handling strategy
+    // handling strategy. Clean up P if returning null.
+    delete P;
+    return nullptr;
   }
   // llvm::outs() << "reached EOF" << "\n"; // Debug
   return Res;

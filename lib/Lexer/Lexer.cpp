@@ -23,13 +23,14 @@ LLVM_READNONE inline static bool isIdentifierChar(char c) {
 }
 
 LLVM_READNONE inline static bool isOperatorChar(char c) {
-    // Extend this as needed for other non-alphanumeric operators
-    return c == '+' || c == '-' || c == '<' || c == '>' || c == '=';
+  // Extend this as needed for other non-alphanumeric operators
+  return c == '+' || c == '-' || c == '<' || c == '>' || c == '=';
 }
 
 // Function to check if a character can start an identifier or keyword
 LLVM_READNONE inline static bool isIdentifierStartChar(char c) {
-    return isLetter(c) || c == '_' || c == '?' || c == '!' || c == '='; // eq? set!
+  return isLetter(c) || c == '_' || c == '?' || c == '!' ||
+         c == '='; // eq? set!
 }
 
 } // namespace charinfo
@@ -46,15 +47,16 @@ void Lexer::next(Token &token) {
   const char *startPtr = BufferPtr;
 
   // Handle Numbers
-  if (charinfo::isDigit(*BufferPtr) || (*BufferPtr == '-' && charinfo::isDigit(*(BufferPtr + 1)))) {
+  if (charinfo::isDigit(*BufferPtr) ||
+      (*BufferPtr == '-' && charinfo::isDigit(*(BufferPtr + 1)))) {
     // Allow leading minus for negative numbers
     const char *End = BufferPtr + 1;
     while (charinfo::isDigit(*End))
       ++End;
     // Check if it's just "-" which should be the minus operator
     if (End == startPtr + 1 && *startPtr == '-') {
-         formToken(token, End, TokenKind::minus);
-         return;
+      formToken(token, End, TokenKind::minus);
+      return;
     }
     formToken(token, End, TokenKind::integer_literal);
     return;
@@ -74,7 +76,8 @@ void Lexer::next(Token &token) {
   }
 
   // Handle Identifiers, Keywords, and Named Operators (like vector-ref)
-  if (charinfo::isIdentifierStartChar(*BufferPtr) || *BufferPtr == 'v' || *BufferPtr == 's') { // Added 'v', 's' check
+  if (charinfo::isIdentifierStartChar(*BufferPtr) || *BufferPtr == 'v' ||
+      *BufferPtr == 's') { // Added 'v', 's' check
     const char *End = BufferPtr + 1;
     while (charinfo::isIdentifierChar(*End))
       ++End;
@@ -83,22 +86,67 @@ void Lexer::next(Token &token) {
 
     // Check for specific keywords and operators FIRST
     // This list needs to be comprehensive
-    if (Text == "let") { formToken(token, End, TokenKind::kw_let); return; }
-    if (Text == "if") { formToken(token, End, TokenKind::kw_if); return; }
-    if (Text == "while") { formToken(token, End, TokenKind::kw_while); return; }
-    if (Text == "begin") { formToken(token, End, TokenKind::kw_begin); return; }
-    if (Text == "void") { formToken(token, End, TokenKind::kw_void); return; }
-    if (Text == "read") { formToken(token, End, TokenKind::read); return; }
-    if (Text == "eq?") { formToken(token, End, TokenKind::eq); return; }
-    if (Text == "and") { formToken(token, End, TokenKind::and_); return; }
-    if (Text == "or") { formToken(token, End, TokenKind::or_); return; }
-    if (Text == "not") { formToken(token, End, TokenKind::not_); return; }
-    if (Text == "set!") { formToken(token, End, TokenKind::setb); return; }
+    if (Text == "let") {
+      formToken(token, End, TokenKind::kw_let);
+      return;
+    }
+    if (Text == "if") {
+      formToken(token, End, TokenKind::kw_if);
+      return;
+    }
+    if (Text == "while") {
+      formToken(token, End, TokenKind::kw_while);
+      return;
+    }
+    if (Text == "begin") {
+      formToken(token, End, TokenKind::kw_begin);
+      return;
+    }
+    if (Text == "void") {
+      formToken(token, End, TokenKind::kw_void);
+      return;
+    }
+    if (Text == "read") {
+      formToken(token, End, TokenKind::read);
+      return;
+    }
+    if (Text == "eq?") {
+      formToken(token, End, TokenKind::eq);
+      return;
+    }
+    if (Text == "and") {
+      formToken(token, End, TokenKind::and_);
+      return;
+    }
+    if (Text == "or") {
+      formToken(token, End, TokenKind::or_);
+      return;
+    }
+    if (Text == "not") {
+      formToken(token, End, TokenKind::not_);
+      return;
+    }
+    if (Text == "set!") {
+      formToken(token, End, TokenKind::setb);
+      return;
+    }
     // --- ADDED VECTOR KEYWORD CHECKS ---
-    if (Text == "vector") { formToken(token, End, TokenKind::vector); return; }
-    if (Text == "vector-length") { formToken(token, End, TokenKind::vector_length); return; }
-    if (Text == "vector-ref") { formToken(token, End, TokenKind::vector_ref); return; }
-    if (Text == "vector-set!") { formToken(token, End, TokenKind::vector_setb); return; }
+    if (Text == "vector") {
+      formToken(token, End, TokenKind::vector);
+      return;
+    }
+    if (Text == "vector-length") {
+      formToken(token, End, TokenKind::vector_length);
+      return;
+    }
+    if (Text == "vector-ref") {
+      formToken(token, End, TokenKind::vector_ref);
+      return;
+    }
+    if (Text == "vector-set!") {
+      formToken(token, End, TokenKind::vector_setb);
+      return;
+    }
     // --- END VECTOR KEYWORD CHECKS ---
 
     // If it matches none of the above, it's a regular identifier
@@ -108,20 +156,36 @@ void Lexer::next(Token &token) {
 
   // Handle Single/Double Character Punctuators/Operators
   switch (*startPtr) {
-    case '(': formToken(token, startPtr + 1, TokenKind::l_paren); break;
-    case ')': formToken(token, startPtr + 1, TokenKind::r_paren); break;
-    case '[': formToken(token, startPtr + 1, TokenKind::l_square); break;
-    case ']': formToken(token, startPtr + 1, TokenKind::r_square); break;
-    case '+': formToken(token, startPtr + 1, TokenKind::plus); break;
-    case '-': formToken(token, startPtr + 1, TokenKind::minus); break; // Handles "-" operator if not followed by digit
-    case '<':
-        if (*(startPtr + 1) == '=') formToken(token, startPtr + 2, TokenKind::le);
-        else formToken(token, startPtr + 1, TokenKind::lt);
-        break;
-    case '>':
-        if (*(startPtr + 1) == '=') formToken(token, startPtr + 2, TokenKind::ge);
-        else formToken(token, startPtr + 1, TokenKind::gt);
-        break;
+  case '(':
+    formToken(token, startPtr + 1, TokenKind::l_paren);
+    break;
+  case ')':
+    formToken(token, startPtr + 1, TokenKind::r_paren);
+    break;
+  case '[':
+    formToken(token, startPtr + 1, TokenKind::l_square);
+    break;
+  case ']':
+    formToken(token, startPtr + 1, TokenKind::r_square);
+    break;
+  case '+':
+    formToken(token, startPtr + 1, TokenKind::plus);
+    break;
+  case '-':
+    formToken(token, startPtr + 1, TokenKind::minus);
+    break; // Handles "-" operator if not followed by digit
+  case '<':
+    if (*(startPtr + 1) == '=')
+      formToken(token, startPtr + 2, TokenKind::le);
+    else
+      formToken(token, startPtr + 1, TokenKind::lt);
+    break;
+  case '>':
+    if (*(startPtr + 1) == '=')
+      formToken(token, startPtr + 2, TokenKind::ge);
+    else
+      formToken(token, startPtr + 1, TokenKind::gt);
+    break;
     // Note: 'eq?' is handled above as it starts like an identifier
     // Note: 'set!' is handled above as it starts like an identifier
 

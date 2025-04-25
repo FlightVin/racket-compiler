@@ -40,7 +40,7 @@ class ToIRVisitor : public ASTVisitor {
   // LLVM Types (initialized in constructor - these are llvm::Type*)
   llvm::Type *LLVMVoidTy;
   llvm::Type *LLVMInt32Ty;
-  llvm::Type *LLVMInt1Ty; // Boolean type (i1)
+  llvm::Type *LLVMInt1Ty;  // Boolean type (i1)
   llvm::Type *LLVMInt64Ty; // <<< ADDED LLVM i64 type
   llvm::PointerType *LLVMInt32PtrTy;
   llvm::PointerType *LLVMInt1PtrTy;
@@ -72,7 +72,7 @@ class ToIRVisitor : public ASTVisitor {
   llvm::Function *getOrDeclareReadValue();
   llvm::Function *getOrDeclareWriteInt();
   llvm::Function *getOrDeclareWriteBool();
-  llvm::Function* getOrDeclareAllocate(); // <<< ADDED Declaration
+  llvm::Function *getOrDeclareAllocate(); // <<< ADDED Declaration
 
 public:
   // Constructor

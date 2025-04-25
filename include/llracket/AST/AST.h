@@ -1,17 +1,23 @@
 #ifndef LLRACKET_AST_AST_H
 #define LLRACKET_AST_AST_H
 
+#include "llracket/Basic/Type.h"
 #include "llracket/Lexer/Token.h"
 #include <any>
 #include <cassert> // For assert
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
+#include <utility>
 #include <vector>
 
+// Forward Declarations
 class AST;
+class Def; // Forward declaration
 class Program;
 typedef llvm::StringMap<std::any> ProgramInfo;
-class Expr;
+class Expr; // Forward declaration
+class Type; // Forward declaration (already included via Type.h but good
+            // practice)
 class Prim;
 class Int;
 class Var;
@@ -22,14 +28,16 @@ class SetBang;
 class Begin;
 class WhileLoop;
 class Void;
-class VectorLiteral; // ADDED Forward declaration
+class VectorLiteral;
+class Apply;
 
 class ASTVisitor {
 public:
   virtual ~ASTVisitor() {}
+  // Note: visit(Program&) signature remains the same, but its behavior changes
   virtual void visit(Program &) {};
   virtual void visit(Expr &) {};
-  virtual void visit(Prim &) = 0; // Now pure virtual as Prim handles more ops
+  virtual void visit(Prim &) = 0;
   virtual void visit(Var &) = 0;
   virtual void visit(Let &) = 0;
   virtual void visit(Int &) = 0;
@@ -39,7 +47,11 @@ public:
   virtual void visit(Begin &) = 0;
   virtual void visit(WhileLoop &) = 0;
   virtual void visit(Void &) = 0;
-  virtual void visit(VectorLiteral &) = 0; // ADDED pure virtual visit method
+  virtual void visit(VectorLiteral &) = 0;
+  // --- L_Fun Additions ---
+  virtual void visit(Def &) = 0;   // Declaration added previously
+  virtual void visit(Apply &) = 0; // Declaration added previously
+  // --- End L_Fun Additions ---
 };
 
 class AST {
@@ -49,16 +61,18 @@ public:
 };
 
 class Program : public AST {
-  Expr *E;
+  std::vector<Def *> Defs;
+  Expr *MainExpr;
   ProgramInfo Info;
 
 public:
-  Program(Expr *E) : E(E) {};
-  Program(Expr *E, ProgramInfo Info) : E(E), Info(Info) {};
-
-  Expr *getExpr() const { return E; };
-  ProgramInfo getInfo() const { return Info; };
-
+  Program(std::vector<Def *> Defs, Expr *MainExpr, ProgramInfo Info = {})
+      : Defs(std::move(Defs)), MainExpr(MainExpr), Info(std::move(Info)) {}
+  Program(Expr *MainExpr, ProgramInfo Info = {})
+      : Defs(), MainExpr(MainExpr), Info(std::move(Info)) {}
+  const std::vector<Def *> &getDefs() const { return Defs; }
+  Expr *getMainExpr() const { return MainExpr; };
+  const ProgramInfo &getInfo() const { return Info; };
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 };
 
@@ -75,7 +89,8 @@ public:
     ExprBegin,
     ExprWhileLoop,
     ExprVoid,
-    ExprVectorLiteral // ADDED Kind for VectorLiteral
+    ExprVectorLiteral,
+    ExprApply // Added previously
   };
 
 private:
@@ -83,7 +98,6 @@ private:
 
 public:
   Expr(ExprKind Kind) : Kind(Kind) {}
-
   ExprKind getKind() const { return Kind; }
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 };
@@ -239,7 +253,6 @@ public:
   static bool classof(const Expr *E) { return E->getKind() == ExprVoid; }
 };
 
-// ADDED VectorLiteral class
 class VectorLiteral : public Expr {
   std::vector<Expr *> Elements;
 
@@ -253,6 +266,48 @@ public:
   static bool classof(const Expr *E) {
     return E->getKind() == ExprVectorLiteral;
   }
+};
+
+class Def : public AST {
+  StringRef Name;
+  std::vector<std::pair<StringRef, Type *>> Params;
+  Type *ReturnType;
+  Expr *Body;
+
+public:
+  Def(StringRef Name, std::vector<std::pair<StringRef, Type *>> Params,
+      Type *ReturnType, Expr *Body)
+      : Name(Name), Params(std::move(Params)), ReturnType(ReturnType),
+        Body(Body) {}
+  StringRef getName() const { return Name; }
+  const std::vector<std::pair<StringRef, Type *>> &getParams() const {
+    return Params;
+  }
+  Type *getReturnType() const { return ReturnType; }
+  Expr *getBody() const { return Body; }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+};
+
+// --- Apply Class Definition ---
+class Apply : public Expr {
+  Expr *FnExpr;             // The expression evaluating to a function
+  std::vector<Expr *> Args; // The argument expressions
+
+public:
+  // Constructor takes the function expression and a vector of argument
+  // expressions
+  Apply(Expr *FnExpr, std::vector<Expr *> Args)
+      : Expr(ExprApply), FnExpr(FnExpr), Args(std::move(Args)) {
+    assert(FnExpr && "Function expression cannot be null in Apply node");
+  }
+
+  Expr *getFnExpr() const { return FnExpr; }
+  const std::vector<Expr *> &getArgs() const { return Args; }
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  // LLVM RTTI support
+  static bool classof(const Expr *E) { return E->getKind() == ExprApply; }
 };
 
 #endif // LLRACKET_AST_AST_H

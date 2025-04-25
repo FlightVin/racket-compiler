@@ -27,7 +27,7 @@ const char *DiagnosticsEngine::getDiagnosticText(unsigned DiagID) {
 llvm::SourceMgr::DiagKind
 DiagnosticsEngine::getDiagnosticKind(unsigned DiagID) {
   // Add bounds check if necessary
-   if (DiagID >= sizeof(DiagnosticKind) / sizeof(DiagnosticKind[0])) {
+  if (DiagID >= sizeof(DiagnosticKind) / sizeof(DiagnosticKind[0])) {
     return llvm::SourceMgr::DK_Error; // Default to error for invalid ID
   }
   return DiagnosticKind[DiagID];
