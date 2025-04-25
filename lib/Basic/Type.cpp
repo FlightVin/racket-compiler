@@ -1,8 +1,8 @@
 #include "llracket/Basic/Type.h"
-#include "llvm/Support/Casting.h" // For dyn_cast, cast
-#include <llvm/ADT/FoldingSet.h>  // Optional: For future uniquing/caching
-#include <sstream>                // For getName
-#include <string>                 // For std::string in getName
+#include "llvm/Support/Casting.h" // <<< Ensure this is included
+#include <llvm/ADT/FoldingSet.h>
+#include <sstream>
+#include <string>
 
 namespace llracket {
 
@@ -54,10 +54,10 @@ bool VectorType::equals(const Type *Other) const {
   // if (!Type::equals(Other)) return false; // Check kind first
   if (this == Other)
     return true;
-  if (!Other || !isa<VectorType>(Other))
+  if (!Other || !llvm::isa<VectorType>(Other))
     return false; // Added RTTI check
 
-  const VectorType *OtherVec = cast<VectorType>(Other);
+  const VectorType *OtherVec = llvm::cast<VectorType>(Other);
   if (ElementTypes.size() != OtherVec->ElementTypes.size())
     return false;
 
@@ -74,17 +74,14 @@ bool VectorType::equals(const Type *Other) const {
 }
 
 // --- FunctionType Implementation ---
-
-FunctionType *FunctionType::get(std::vector<Type *> ParamTypes,
-                                Type *ReturnType) {
+FunctionType *FunctionType::get(std::vector<Type *> ParamTypes, Type *ReturnType) {
   // TODO: Add uniquing/caching if needed
   return new FunctionType(std::move(ParamTypes), ReturnType);
 }
-
 std::string FunctionType::getName() const {
   std::stringstream ss;
-  ss << "(->"; // Racket-like syntax
-  for (const auto *ParamTy : ParamTypes) {
+  ss << "(->";
+  for (const auto* ParamTy : ParamTypes) {
     ss << " " << (ParamTy ? ParamTy->getName() : "<nulltype>");
   }
   ss << " " << (ReturnType ? ReturnType->getName() : "<nulltype>");
@@ -93,29 +90,21 @@ std::string FunctionType::getName() const {
 }
 
 bool FunctionType::equals(const Type *Other) const {
-  // Base class equals already checked kind in Type::equals
-  // if (!Type::equals(Other)) return false; // Check kind first
-  if (this == Other)
-    return true;
-  if (!Other || !isa<FunctionType>(Other))
-    return false; // Added RTTI check
+  if (this == Other) return true;
+  if (!Other || !llvm::isa<FunctionType>(Other)) return false; // Use llvm::isa
 
-  const FunctionType *OtherFunc = cast<FunctionType>(Other);
+  const FunctionType *OtherFunc = llvm::cast<FunctionType>(Other); // Use llvm::cast
 
-  // Check return types
   if (ReturnType != OtherFunc->ReturnType) {
-    if (!ReturnType || !OtherFunc->ReturnType ||
-        !ReturnType->equals(OtherFunc->ReturnType)) {
+    if (!ReturnType || !OtherFunc->ReturnType || !ReturnType->equals(OtherFunc->ReturnType)) {
       return false;
     }
   }
 
-  // Check parameter types count
   if (ParamTypes.size() != OtherFunc->ParamTypes.size()) {
     return false;
   }
 
-  // Check parameter types individually
   for (size_t i = 0; i < ParamTypes.size(); ++i) {
     Type *Param1 = ParamTypes[i];
     Type *Param2 = OtherFunc->ParamTypes[i];
@@ -129,5 +118,6 @@ bool FunctionType::equals(const Type *Other) const {
   return true;
 }
 // --- END FunctionType Implementation ---
+
 
 } // namespace llracket

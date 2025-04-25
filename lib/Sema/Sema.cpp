@@ -6,13 +6,11 @@
 #include "llvm/Support/Casting.h"       // For llvm::cast in visit(Expr&)
 #include "llvm/Support/ErrorHandling.h" // For llvm_unreachable
 
-// Include headers needed for helper implementations, if any were missed
 #include <string>
-// #include "llracket/Lexer/Token.h" // Maybe not needed now
 
 using namespace llvm;
 using namespace llracket;
-using namespace llracket::sema; // Use the internal sema namespace
+using namespace llracket::sema;
 
 // --- Sema class methods (Public Interface) ---
 bool Sema::typeCheck(AST *Tree) {
@@ -43,21 +41,21 @@ bool Sema::semantic(AST *Tree) {
 
 // --- TypeCheckVisitor Constructor Implementation ---
 TypeCheckVisitor::TypeCheckVisitor(
-    DiagnosticsEngine &D,
-    llvm::DenseMap<Expr *, Type *>
-        &ET, // Note: llracket::Type implied by Sema.h context
-    llvm::StringMap<Type *>
-        &VT) // Note: llracket::Type implied by Sema.h context
-    : Diags(D), ExprTypes(ET), CurrentVarTypes(VT), HasError(false) {}
+  DiagnosticsEngine &D,
+  llvm::DenseMap<Expr *, Type *> &ET, // Use llracket::Type implicitly via namespace
+  llvm::StringMap<Type *> &VT)
+  : Diags(D), ExprTypes(ET), CurrentVarTypes(VT), HasError(false) {}
 
 // --- TypeCheckVisitor Helper Method Implementations ---
 
 bool TypeCheckVisitor::hasError() const { return HasError; }
 
-llvm::SMLoc TypeCheckVisitor::getLoc(Expr *Node) {
+llvm::SMLoc TypeCheckVisitor::getLoc(AST *Node) {
   // Placeholder - enhance when Parser adds locations to AST nodes
+  // TODO: Actually get location from Node if possible
   return llvm::SMLoc();
 }
+// --- END FIXED getLoc signature ---
 
 // Takes llracket::Type*
 void TypeCheckVisitor::recordType(Expr *Node, Type *T) {
@@ -169,7 +167,11 @@ void TypeCheckVisitor::visit(Expr &Node) {
   case Expr::ExprVoid:
     llvm::cast<Void>(Node).accept(*this);
     break;
-    // Add: case Expr::ExprVectorLiteral:
-    // llvm::cast<VectorLiteral>(Node).accept(*this); break;
+  case Expr::ExprApply:
+    llvm::cast<Apply>(Node).accept(*this);
+    break;
+  case Expr::ExprVectorLiteral:
+    llvm::cast<VectorLiteral>(Node).accept(*this);
+    break;
   }
 }

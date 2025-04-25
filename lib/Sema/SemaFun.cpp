@@ -1,13 +1,13 @@
 #include "SemaVisitor.h"
 #include "llracket/AST/AST.h"
-#include "llracket/Basic/Type.h"
+#include "llracket/Basic/Type.h" // Includes llracket::Type
 #include "llvm/ADT/ScopeExit.h" // For restoring scope easily
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include <vector>
 
 using namespace llvm;
-using namespace llracket;
+using namespace llracket; // Keep using namespace
 using namespace llracket::sema;
 
 // --- TypeCheckVisitor Methods Implementation ---

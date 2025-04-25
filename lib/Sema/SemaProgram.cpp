@@ -43,7 +43,7 @@ void TypeCheckVisitor::visit(Program &Node) {
     std::vector<Type *> paramTypes;
     paramTypes.reserve(d->getParams().size());
     bool paramTypeError = false;
-    for (const auto ¶mPair : d->getParams()) {
+    for (const auto paramPair : d->getParams()) {
       Type *paramType = paramPair.second;
       if (!checkTypeWellFormedness(
               paramType, getLoc(d))) { // Assuming getLoc(d) is reasonable
