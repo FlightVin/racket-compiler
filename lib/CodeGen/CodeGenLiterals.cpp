@@ -29,4 +29,3 @@ void ToIRVisitor::visit(Bool &Node) {
 }
 
 void ToIRVisitor::visit(Void &Node) { V = LLVMInt32Zero; }
-

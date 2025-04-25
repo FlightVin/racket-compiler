@@ -1,18 +1,21 @@
 #ifndef LLRACKET_PARSER_PARSER_H
 #define LLRACKET_PARSER_PARSER_H
 
-#include "llracket/AST/AST.h"
+#include "llracket/AST/AST.h" // Includes AST.h which includes Type.h
 #include "llracket/Basic/Diagnostic.h"
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <unordered_set> // For skipUntil
+#include <utility>       // For std::pair
 #include <vector>
+
+// Forward declare Type class is NOT needed because AST.h includes Type.h
 
 class Parser {
   Lexer &Lex;
   Token Tok;
   DiagnosticsEngine &Diags;
 
-  // {Received Token, Expected Token}
   std::vector<std::pair<TokenKind, TokenKind>> UnexpectedTokens;
 
   void error(TokenKind Kind) {
@@ -31,6 +34,8 @@ class Parser {
 
   bool expect(TokenKind Kind) {
     if (Tok.getKind() != Kind) {
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
+                   tok::getTokenName(Kind));
       error(Kind);
       return false;
     }
@@ -44,8 +49,11 @@ class Parser {
     return true;
   }
 
+  // --- Parsing Methods ---
   Expr *parseExpr();
   Let *parseLetExpr();
+  Def *parseDef();
+  llracket::Type *parseType(); // <<< Use qualified name llracket::Type
 
 public:
   Parser(Lexer &Lex, DiagnosticsEngine &Diags) : Lex(Lex), Diags(Diags) {
@@ -57,6 +65,8 @@ public:
   template <class... Tokens> void skipUntil(Tokens... Toks) {
     std::unordered_set<tok::TokenKind> Skipset = {tok::eof, Toks...};
     while (true) {
+      if (Tok.getKind() == tok::eof)
+        break;
       if (Skipset.count(Tok.getKind())) {
         break;
       }
@@ -64,4 +74,4 @@ public:
     }
   }
 };
-#endif
+#endif // LLRACKET_PARSER_PARSER_H

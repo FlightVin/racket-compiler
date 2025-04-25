@@ -2,9 +2,12 @@
 #include "llracket/AST/AST.h"
 #include "llracket/Basic/Type.h" // Include new Type definitions
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/ScopeExit.h" // <<< ADDED: For scope exit cleanup
 #include "llvm/ADT/StringMap.h"
+#include "llvm/IR/Constants.h" // For Constant::getNullValue
+#include "llvm/IR/Function.h"  // For Function
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Instructions.h" // For AllocaInst, LoadInst, StoreInst
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -17,118 +20,145 @@ using namespace llracket::codegen;
 // --- Implementation of ToIRVisitor methods ---
 
 void ToIRVisitor::visit(Var &Node) {
-  // Access nameMap, Builder, ExprTypes, getLLVMType, V, Type singletons
-  // directly
-  auto it = nameMap.find(Node.getName());
-  if (it != nameMap.end()) {
-    AllocaInst *Alloca = it->second;
-    V = Builder.CreateLoad(Alloca->getAllocatedType(), Alloca, Node.getName());
-  } else {
-    llvm::errs() << "Codegen Error: Undefined variable '" << Node.getName()
-                 << "' encountered.\n";
-    // Attempt to get type from Sema, default to ErrorType if not found
-    Type *ExpectedType = ExprTypes.lookup(&Node);
-    if (!ExpectedType)
-      ExpectedType = ErrorType::get();
-
-    llvm::Type *LLVMExpectedType =
-        getLLVMType(ExpectedType); // MODIFIED: Use helper
-    V = llvm::Constant::getNullValue(
-        LLVMExpectedType); // Use null value for error
-                           // Example: V = (LLVMExpectedType == LLVMInt1Ty) ?
-                           // (Value*)LLVMFalseConstant : (Value*)LLVMInt32Zero;
+  StringRef Name = Node.getName();
+  // 1. Check local variable/parameter map first
+  auto itLocal = nameMap.find(Name);
+  if (itLocal != nameMap.end()) {
+    AllocaInst *Alloca = itLocal->second;
+    // Ensure the builder has a valid insertion point
+    if (!Builder.GetInsertBlock()) {
+      llvm::errs()
+          << "Codegen Error: Builder has no insert point during Var load for "
+          << Name << "\n";
+      // Attempt recovery or fatal error
+      if (CurrentFunction && !CurrentFunction->empty())
+        Builder.SetInsertPoint(&CurrentFunction->back());
+      else
+        llvm::report_fatal_error("Cannot recover builder state in visit(Var&)");
+    }
+    V = Builder.CreateLoad(Alloca->getAllocatedType(), Alloca, Name);
+    return;
   }
+
+  // 2. Check global function map second
+  auto itGlobal = GlobalFunctions.find(Name);
+  if (itGlobal != GlobalFunctions.end()) {
+    // A global function name used as a value yields its pointer
+    V = itGlobal->second;
+    return;
+  }
+
+  // 3. If not found, it's an error (Sema should have caught this)
+  llvm::errs()
+      << "Codegen Internal Error: Undefined variable '" << Name
+      << "' encountered during CodeGen (should have been caught by Sema).\n";
+  Type *ExpectedType = ExprTypes.lookup(&Node);
+  llvm::Type *LLVMExpectedType =
+      getLLVMType(ExpectedType ? ExpectedType : ErrorType::get());
+  V = llvm::Constant::getNullValue(LLVMExpectedType);
 }
 
 void ToIRVisitor::visit(Let &Node) {
-  // Access ExprTypes, getLLVMType, Builder, V, nameMap, Type singletons
-  // directly
-  Type *VarBindingType = ExprTypes.lookup(Node.getBinding()); // Returns Type*
-  if (!VarBindingType ||
-      VarBindingType == ErrorType::get()) { // MODIFIED: Check null or ErrorType
-    llvm::errs() << "Codegen Skipping Let due to binding type error for var: "
-                 << Node.getVar() << "\n";
-    Type *LetResultType = ExprTypes.lookup(&Node);
-    if (!LetResultType)
-      LetResultType = ErrorType::get();
-    llvm::Type *LLVMResultType = getLLVMType(LetResultType);
-    V = llvm::Constant::getNullValue(
-        LLVMResultType); // MODIFIED: Use null value
-    return;
-  }
-  llvm::Type *VarLLVMType = getLLVMType(VarBindingType); // MODIFIED: Use helper
+  StringRef VarName = Node.getVar();
 
-  // Alloca Placement
-  Function *TheFunction = Builder.GetInsertBlock()->getParent();
-  BasicBlock *EntryBB = &TheFunction->getEntryBlock();
-  if (!EntryBB) {
-    llvm::errs()
-        << "Codegen Error: Cannot find entry block for Alloca in Let.\n";
-    Type *LetResultType = ExprTypes.lookup(&Node);
-    if (!LetResultType)
-      LetResultType = ErrorType::get();
-    llvm::Type *LLVMResultType = getLLVMType(LetResultType);
-    V = llvm::Constant::getNullValue(LLVMResultType);
-    return;
-  }
-  IRBuilder<> TmpBuilder(EntryBB, EntryBB->getFirstInsertionPt());
-  AllocaInst *Alloca =
-      TmpBuilder.CreateAlloca(VarLLVMType, nullptr, Node.getVar());
-
-  // Evaluate binding
+  // Evaluate binding first
   Node.getBinding()->accept(*this);
   Value *BindingVal = V;
 
+  Type *VarBindingType = ExprTypes.lookup(Node.getBinding());
+  if (!VarBindingType || VarBindingType == ErrorType::get()) {
+    llvm::errs() << "Codegen Skipping Let due to binding type error for var: "
+                 << VarName << "\n";
+    Type *LetResultType = ExprTypes.lookup(&Node);
+    llvm::Type *LLVMResultType =
+        getLLVMType(LetResultType ? LetResultType : ErrorType::get());
+    // Ensure body is visited even if binding has error, to catch other errors
+    if (Node.getBody())
+      Node.getBody()->accept(*this);
+    V = llvm::Constant::getNullValue(LLVMResultType);
+    return;
+  }
+  llvm::Type *VarLLVMType = getLLVMType(VarBindingType);
+
   if (!BindingVal) {
     llvm::errs() << "Codegen Error: Null value produced for let binding '"
-                 << Node.getVar() << "'. Using default.\n";
+                 << VarName << "'. Using default.\n";
     BindingVal = llvm::Constant::getNullValue(VarLLVMType);
-  }
-
-  // Ensure type match, cast if necessary (using LLVM types)
-  if (BindingVal->getType() != VarLLVMType) {
-    llvm::errs() << "Codegen Warning: Type mismatch for let binding '"
-                 << Node.getVar() << "'. Expected " << *VarLLVMType << ", got "
-                 << *BindingVal->getType() << ". Attempting cast.\n";
+  } else if (BindingVal->getType() != VarLLVMType) {
+    // Attempt type cast/fixup
     if (VarLLVMType == LLVMInt32Ty && BindingVal->getType() == LLVMInt1Ty) {
       BindingVal = Builder.CreateZExt(BindingVal, LLVMInt32Ty, "let.bind.cast");
     } else if (VarLLVMType == LLVMInt1Ty &&
                BindingVal->getType() == LLVMInt32Ty) {
       BindingVal =
           Builder.CreateICmpNE(BindingVal, LLVMInt32Zero, "let.bind.cast");
-    } // Add more casts if needed (e.g., pointer types)
-    else {
-      llvm::errs() << " -- Cannot cast binding value. Using default.\n";
+    } else if (VarLLVMType->isPointerTy() &&
+               BindingVal->getType()->isPointerTy()) {
+      BindingVal = Builder.CreatePointerCast(BindingVal, VarLLVMType,
+                                             "let.bind.ptrcast");
+    } else if (VarLLVMType !=
+               BindingVal->getType()) { // Check again after casts
+      llvm::errs()
+          << "Codegen Warning: Unhandled type mismatch for let binding '"
+          << VarName << "'. Expected " << *VarLLVMType << ", got "
+          << *BindingVal->getType() << ". Using default.\n";
       BindingVal = llvm::Constant::getNullValue(VarLLVMType);
     }
   }
 
+  // Use CreateEntryBlockAlloca for the let-bound variable
+  AllocaInst *Alloca = CreateEntryBlockAlloca(VarLLVMType, VarName);
+
+  // Ensure builder has insertion point before storing
+  if (!Builder.GetInsertBlock()) {
+    llvm::errs() << "Codegen Error: Builder has no insert point before storing "
+                    "let binding for "
+                 << VarName << "\n";
+    if (CurrentFunction && !CurrentFunction->empty())
+      Builder.SetInsertPoint(&CurrentFunction->back());
+    else
+      llvm::report_fatal_error("Cannot recover builder state in visit(Let&)");
+  }
   Builder.CreateStore(BindingVal, Alloca);
 
   // Scope Management
-  AllocaInst *OldValue = nameMap.lookup(Node.getVar());
-  nameMap[Node.getVar()] = Alloca;
+  llvm::AllocaInst *OldValue = nullptr;
+  bool hadOldBinding = nameMap.count(VarName);
+  if (hadOldBinding) {
+    OldValue = nameMap[VarName];
+  }
+  nameMap[VarName] = Alloca;
+
+  auto scopeExit = llvm::make_scope_exit([&]() {
+    if (hadOldBinding)
+      nameMap[VarName] = OldValue;
+    else
+      nameMap.erase(VarName);
+  });
 
   // Evaluate body
-  Node.getBody()->accept(*this);
-  Value *BodyValue = V;
-
-  // Restore scope
-  if (OldValue)
-    nameMap[Node.getVar()] = OldValue;
-  else
-    nameMap.erase(Node.getVar());
-
-  V = BodyValue; // V is already set by the body visit
+  if (Node.getBody()) {
+    Node.getBody()->accept(*this);
+  } else {
+    llvm::errs() << "Codegen Error: Null body for let binding '" << VarName
+                 << "'\n";
+    // Determine expected result type of Let itself and return null
+    Type *LetResultType = ExprTypes.lookup(&Node);
+    V = Constant::getNullValue(
+        getLLVMType(LetResultType ? LetResultType : ErrorType::get()));
+  }
+  // V is set by the body visit. Scope restored automatically.
 }
 
 void ToIRVisitor::visit(SetBang &Node) {
-  // Access nameMap, Builder, V, Type singletons directly
-  auto it = nameMap.find(Node.getVarName());
+  StringRef VarName = Node.getVarName();
+  // Check only local map `nameMap`. Globals (functions) are not mutable.
+  auto it = nameMap.find(VarName);
   if (it == nameMap.end()) {
-    llvm::errs() << "Codegen Error: Variable " << Node.getVarName()
-                 << " not found for set!\n";
-    V = LLVMInt32Zero; // set! result is void (represented by i32 0)
+    // Sema should catch attempts to set! a function name.
+    llvm::errs() << "Codegen Internal Error: Variable " << VarName
+                 << " not found for set! (should have been caught by Sema).\n";
+    V = LLVMInt32Zero;
     return;
   }
   AllocaInst *VarLoc = it->second;
@@ -140,29 +170,43 @@ void ToIRVisitor::visit(SetBang &Node) {
   if (!ValToStore) {
     llvm::errs()
         << "Codegen Error: Null value produced for set! assignment to '"
-        << Node.getVarName() << "'.\n";
+        << VarName << "'.\n";
     V = LLVMInt32Zero;
     return;
   }
 
-  // Ensure type match, casting if needed (using LLVM types)
+  // Ensure type match, casting if needed
   if (ValToStore->getType() != VarLLVMType) {
-    llvm::errs() << "Codegen Warning: Type mismatch in set! for '"
-                 << Node.getVarName() << "'. Expected " << *VarLLVMType
-                 << ", got " << *ValToStore->getType() << ". Casting.\n";
     if (VarLLVMType == LLVMInt32Ty && ValToStore->getType() == LLVMInt1Ty) {
       ValToStore = Builder.CreateZExt(ValToStore, LLVMInt32Ty, "set_cast");
     } else if (VarLLVMType == LLVMInt1Ty &&
                ValToStore->getType() == LLVMInt32Ty) {
       ValToStore = Builder.CreateICmpNE(ValToStore, LLVMInt32Zero, "set_cast");
-    } // Add more casts if needed
-    else {
-      llvm::errs() << " -- Cannot cast for set!, skipping store.\n";
+    } else if (VarLLVMType->isPointerTy() &&
+               ValToStore->getType()->isPointerTy()) {
+      ValToStore =
+          Builder.CreatePointerCast(ValToStore, VarLLVMType, "set_ptrcast");
+    } else if (ValToStore->getType() !=
+               VarLLVMType) { // Check again after potential cast
+      llvm::errs() << "Codegen Warning: Unhandled type mismatch in set! for '"
+                   << VarName << "'. Expected " << *VarLLVMType << ", got "
+                   << *ValToStore->getType() << ". Skipping store.\n";
       V = LLVMInt32Zero;
       return;
     }
   }
 
+  // Ensure builder has insertion point before storing
+  if (!Builder.GetInsertBlock()) {
+    llvm::errs()
+        << "Codegen Error: Builder has no insert point before storing set! for "
+        << VarName << "\n";
+    if (CurrentFunction && !CurrentFunction->empty())
+      Builder.SetInsertPoint(&CurrentFunction->back());
+    else
+      llvm::report_fatal_error(
+          "Cannot recover builder state in visit(SetBang&)");
+  }
   Builder.CreateStore(ValToStore, VarLoc);
-  V = LLVMInt32Zero; // set! result is void
+  V = LLVMInt32Zero; // set! result is void (represented by i32 0)
 }

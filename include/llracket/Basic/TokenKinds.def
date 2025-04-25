@@ -30,10 +30,11 @@ PUNCTUATOR(and_, "and")
 PUNCTUATOR(or_, "or")
 PUNCTUATOR(not_, "not")
 PUNCTUATOR(setb, "set!")
-PUNCTUATOR(vector, "vector")                 // ADDED
-PUNCTUATOR(vector_length, "vector-length")   // ADDED
-PUNCTUATOR(vector_ref, "vector-ref")         // ADDED
-PUNCTUATOR(vector_setb, "vector-set!")       // ADDED - Using 'b' suffix like setb
+PUNCTUATOR(vector, "vector")
+PUNCTUATOR(vector_length, "vector-length")
+PUNCTUATOR(vector_ref, "vector-ref")
+PUNCTUATOR(vector_setb, "vector-set!")
+PUNCTUATOR(colon, ":")                 // <<< ADDED
 
 // Keywords with feature flags
 KEYWORD(let, KEYALL)
@@ -43,6 +44,7 @@ KEYWORD(false, KEYALL)
 KEYWORD(while, KEYALL)
 KEYWORD(begin, KEYALL)
 KEYWORD(void, KEYALL)
+KEYWORD(define, KEYALL)              // <<< ADDED
 
 #undef KEYWORD
 #undef PUNCTUATOR

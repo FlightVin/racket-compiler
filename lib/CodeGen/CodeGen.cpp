@@ -1,15 +1,18 @@
 #include "llracket/CodeGen/CodeGen.h"
 #include "CodeGenVisitor.h" // Include the internal visitor definition
 #include "llracket/AST/AST.h"
-#include "llracket/Basic/Type.h" // Include new Type definitions
+#include "llracket/Basic/Type.h"  // Include new Type definitions
+#include "llvm/IR/DerivedTypes.h" // Needed for PointerType, FunctionType
+#include "llvm/IR/Function.h"     // For Function
+#include "llvm/IR/IRBuilder.h"    // Builder lives here now
+#include "llvm/IR/Instructions.h" // For AllocaInst, CallInst
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/DerivedTypes.h" // Needed for PointerType
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector> // For FunctionType params
 
 using namespace llvm;
 using namespace llracket;
@@ -24,26 +27,25 @@ void CodeGen::compile(AST *Tree) {
   ToIRVisitor ToIR(M, *ExprTypes);
   ToIR.run(Tree);
 
-  if (verifyModule(*M, &errs())) {
+  if (verifyModule(*M, &llvm::errs())) { // Pass errs() for detailed output
     llvm::errs() << "LLVM Module verification failed after CodeGen.\n";
+    M->print(llvm::errs(), nullptr); // Dump module on verification failure
   }
 }
-
 // --- ToIRVisitor Constructor Implementation ---
-ToIRVisitor::ToIRVisitor(
-    Module *Mod, const llvm::DenseMap<Expr *, Type *> &Types)
+ToIRVisitor::ToIRVisitor(Module *Mod,
+                         const llvm::DenseMap<Expr *, Type *> &Types)
     : M(Mod), Builder(Mod->getContext()), Ctx(Mod->getContext()),
       ExprTypes(Types) {
   // LLVM Type initializations
   LLVMVoidTy = llvm::Type::getVoidTy(Ctx);
   LLVMInt1Ty = llvm::Type::getInt1Ty(Ctx);
   LLVMInt32Ty = llvm::Type::getInt32Ty(Ctx);
-  LLVMInt64Ty = llvm::Type::getInt64Ty(Ctx); // <<< ADDED Initialization
+  LLVMInt64Ty = llvm::Type::getInt64Ty(Ctx);
 
   LLVMInt1PtrTy = llvm::PointerType::getUnqual(LLVMInt1Ty);
   LLVMInt32PtrTy = llvm::PointerType::getUnqual(LLVMInt32Ty);
-  LLVMInt64PtrTy = llvm::PointerType::getUnqual(LLVMInt64Ty); // Use initialized type
-
+  LLVMInt64PtrTy = llvm::PointerType::getUnqual(LLVMInt64Ty);
 
   // LLVM Constant initializations
   LLVMInt32Zero = llvm::ConstantInt::get(LLVMInt32Ty, 0, true);
@@ -52,59 +54,178 @@ ToIRVisitor::ToIRVisitor(
   LLVMFalseConstant = llvm::ConstantInt::get(LLVMInt1Ty, 0, false);
 }
 
-
 // --- Helper Method Implementations ---
 llvm::Type *ToIRVisitor::getLLVMType(Type *T) {
   if (!T) {
-    llvm::errs() << "Warning: Null Type encountered during LLVM type lookup. "
-                    "Defaulting to Int32.\n";
+    llvm::errs()
+        << "Warning: Null llracket::Type encountered during LLVM type lookup. "
+           "Defaulting to Int32.\n";
     return LLVMInt32Ty;
   }
   switch (T->getKind()) {
-  case TypeKind::Integer: return LLVMInt32Ty;
-  case TypeKind::Boolean: return LLVMInt1Ty;
-  case TypeKind::Void:    return LLVMInt32Ty; // Represent Void internally with i32
-  case TypeKind::Vector:  return LLVMInt64PtrTy; // Vectors are pointers to i64
-  case TypeKind::Error:
-  case TypeKind::ReadPlaceholder: // Should be resolved before codegen
-    llvm::errs() << "Warning: Encountered Error/Placeholder type during LLVM type lookup. Defaulting to Int32.\n";
+  case TypeKind::Integer:
     return LLVMInt32Ty;
+  case TypeKind::Boolean:
+    return LLVMInt1Ty;
+  case TypeKind::Void:
+    return LLVMInt32Ty; // Represent Void internally with i32 (for returns/vars)
+  case TypeKind::Vector:
+    return LLVMInt64PtrTy; // Vectors are pointers to i64 (tag + elements)
+  case TypeKind::Function:
+    return LLVMInt64PtrTy; // Functions (closures) represented as pointers
+                           // (i64*)
+  case TypeKind::Error:
+  case TypeKind::ReadPlaceholder:
+    llvm::errs() << "Warning: Encountered Error/Placeholder type during LLVM "
+                    "type lookup. Defaulting to Int32.\n";
+    return LLVMInt32Ty; // Use i32 as a fallback for errors
   }
   llvm_unreachable("Invalid TypeKind for getLLVMType");
 }
 
+// --- getLLVMFunctionType ---
+llvm::FunctionType *ToIRVisitor::getLLVMFunctionType(FunctionType *FTy) {
+  if (!FTy) {
+    llvm::errs() << "Error: Cannot get LLVM type for null FunctionType.\n";
+    return llvm::FunctionType::get(LLVMVoidTy, false); // Placeholder
+  }
+  llvm::Type *llvmReturnType = getLLVMType(FTy->getReturnType());
+
+  std::vector<llvm::Type *> llvmParamTypes;
+  llvmParamTypes.reserve(FTy->getParamTypes().size());
+  for (Type *paramTy : FTy->getParamTypes()) {
+    llvmParamTypes.push_back(getLLVMType(paramTy));
+  }
+
+  return llvm::FunctionType::get(llvmReturnType, llvmParamTypes, false);
+}
+// --- END getLLVMFunctionType ---
+
 llvm::PointerType *ToIRVisitor::getLLVMPtrType(Type *T) {
   if (!T) {
-    llvm::errs()
-        << "Warning: Null Type encountered for Alloca, defaulting to Int32*\n";
+    llvm::errs() << "Warning: Null llracket::Type encountered for Alloca, "
+                    "defaulting to Int32*\n";
     return LLVMInt32PtrTy;
   }
-  switch (T->getKind()) {
-  case TypeKind::Integer: return LLVMInt32PtrTy;
-  case TypeKind::Boolean: return LLVMInt1PtrTy;
-  case TypeKind::Void:    return LLVMInt32PtrTy; // Store void representation as i32*
-  case TypeKind::Vector:  return llvm::PointerType::getUnqual(LLVMInt64PtrTy); // Store pointer to vector (i64*)
-  case TypeKind::Error:
-  case TypeKind::ReadPlaceholder:
-    llvm::errs() << "Warning: Error/Placeholder type encountered for Alloca, defaulting to Int32*\n";
-    return LLVMInt32PtrTy;
-  }
-  llvm_unreachable("Invalid TypeKind for getLLVMPtrType");
+  llvm::Type *baseLLVMType = getLLVMType(T);
+  return llvm::PointerType::getUnqual(baseLLVMType);
 }
+
+// --- CreateEntryBlockAlloca ---
+llvm::AllocaInst *ToIRVisitor::CreateEntryBlockAlloca(llvm::Type *Ty,
+                                                      const llvm::Twine &Name) {
+  if (!CurrentFunction) {
+    llvm::report_fatal_error("Cannot create alloca: not inside a function.");
+  }
+  llvm::IRBuilder<> TmpB(
+      &CurrentFunction->getEntryBlock(),
+      CurrentFunction->getEntryBlock().getFirstInsertionPt());
+  return TmpB.CreateAlloca(Ty, nullptr, Name);
+}
+// --- END CreateEntryBlockAlloca ---
+
+// --- ADD RUNTIME HELPERS HERE ---
+
+llvm::Function *ToIRVisitor::getOrDeclareInitialize() {
+  llvm::Function *Func = M->getFunction("initialize");
+  if (!Func) {
+    // Signature: void initialize(i64, i64)
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "initialize", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareAllocate() {
+  llvm::Function *Func = M->getFunction("runtime_allocate");
+  if (!Func) {
+    llvm::PointerType *PtrTy = LLVMInt64PtrTy;
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(PtrTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "runtime_allocate", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareReadValue() {
+  llvm::Function *Func = M->getFunction("read_value");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMInt32Ty, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "read_value", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareWriteInt() {
+  llvm::Function *Func = M->getFunction("write_int");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "write_int", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareWriteBool() {
+  llvm::Function *Func = M->getFunction("write_bool");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "write_bool", M);
+  }
+  return Func;
+}
+// --- END RUNTIME HELPERS ---
 
 // --- Dispatcher Implementation ---
 void ToIRVisitor::visit(Expr &Node) {
   switch (Node.getKind()) {
-    case Expr::ExprPrim: llvm::cast<Prim>(Node).accept(*this); break;
-    case Expr::ExprInt: llvm::cast<Int>(Node).accept(*this); break;
-    case Expr::ExprVar: llvm::cast<Var>(Node).accept(*this); break;
-    case Expr::ExprLet: llvm::cast<Let>(Node).accept(*this); break;
-    case Expr::ExprBool: llvm::cast<Bool>(Node).accept(*this); break;
-    case Expr::ExprIf: llvm::cast<If>(Node).accept(*this); break;
-    case Expr::ExprSetBang: llvm::cast<SetBang>(Node).accept(*this); break;
-    case Expr::ExprBegin: llvm::cast<Begin>(Node).accept(*this); break;
-    case Expr::ExprWhileLoop: llvm::cast<WhileLoop>(Node).accept(*this); break;
-    case Expr::ExprVoid: llvm::cast<Void>(Node).accept(*this); break;
-    case Expr::ExprVectorLiteral: llvm::cast<VectorLiteral>(Node).accept(*this); break;
+    // --- Updated to ensure all cases are present ---
+  case Expr::ExprPrim:
+    llvm::cast<Prim>(Node).accept(*this);
+    break;
+  case Expr::ExprInt:
+    llvm::cast<Int>(Node).accept(*this);
+    break;
+  case Expr::ExprVar:
+    llvm::cast<Var>(Node).accept(*this);
+    break;
+  case Expr::ExprLet:
+    llvm::cast<Let>(Node).accept(*this);
+    break;
+  case Expr::ExprBool:
+    llvm::cast<Bool>(Node).accept(*this);
+    break;
+  case Expr::ExprIf:
+    llvm::cast<If>(Node).accept(*this);
+    break;
+  case Expr::ExprSetBang:
+    llvm::cast<SetBang>(Node).accept(*this);
+    break;
+  case Expr::ExprBegin:
+    llvm::cast<Begin>(Node).accept(*this);
+    break;
+  case Expr::ExprWhileLoop:
+    llvm::cast<WhileLoop>(Node).accept(*this);
+    break;
+  case Expr::ExprVoid:
+    llvm::cast<Void>(Node).accept(*this);
+    break;
+  case Expr::ExprVectorLiteral:
+    llvm::cast<VectorLiteral>(Node).accept(*this);
+    break;
+  case Expr::ExprApply:
+    llvm::cast<Apply>(Node).accept(*this);
+    break;
+  // --- End Updated ---
+  default:
+    llvm_unreachable("Unknown Expr kind in CodeGen dispatcher");
   }
 }

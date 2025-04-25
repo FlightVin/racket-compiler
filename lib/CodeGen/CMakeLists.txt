@@ -1,12 +1,13 @@
 add_library(
     llracketCodeGen
     CodeGen.cpp
-    CodeGenVector.cpp # ADDED
+    CodeGenVector.cpp
     CodeGenProgram.cpp
     CodeGenLiterals.cpp
     CodeGenVariables.cpp
     CodeGenControlFlow.cpp
     CodeGenPrimitives.cpp
+    CodeGenFun.cpp
 )
 
 target_link_libraries(llracketCodeGen PRIVATE LLVMCore LLVMSupport)
