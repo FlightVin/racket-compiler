@@ -83,18 +83,14 @@ llvm::Type *ToIRVisitor::getLLVMType(Type *T) {
   llvm_unreachable("Invalid TypeKind for getLLVMType");
 }
 
-// --- NEW HELPER: getLLVMFunctionType ---
+// --- getLLVMFunctionType ---
 llvm::FunctionType *ToIRVisitor::getLLVMFunctionType(FunctionType *FTy) {
   if (!FTy) {
     llvm::errs() << "Error: Cannot get LLVM type for null FunctionType.\n";
-    // Return a default function type? e.g., void() -> void? Or handle error?
     return llvm::FunctionType::get(LLVMVoidTy, false); // Placeholder
   }
-  // Convert llracket::Type* return type to llvm::Type*
-  // Note: Racket void returns i32 in our convention
   llvm::Type *llvmReturnType = getLLVMType(FTy->getReturnType());
 
-  // Convert llracket::Type* parameter types to llvm::Type*
   std::vector<llvm::Type *> llvmParamTypes;
   llvmParamTypes.reserve(FTy->getParamTypes().size());
   for (Type *paramTy : FTy->getParamTypes()) {
@@ -103,7 +99,7 @@ llvm::FunctionType *ToIRVisitor::getLLVMFunctionType(FunctionType *FTy) {
 
   return llvm::FunctionType::get(llvmReturnType, llvmParamTypes, false);
 }
-// --- END NEW HELPER ---
+// --- END getLLVMFunctionType ---
 
 llvm::PointerType *ToIRVisitor::getLLVMPtrType(Type *T) {
   if (!T) {
@@ -115,27 +111,23 @@ llvm::PointerType *ToIRVisitor::getLLVMPtrType(Type *T) {
   return llvm::PointerType::getUnqual(baseLLVMType);
 }
 
-// --- NEW HELPER: CreateEntryBlockAlloca ---
-// Creates an alloca instruction in the entry block of the current function.
-// Used for allocating space for parameters and local variables.
+// --- CreateEntryBlockAlloca ---
 llvm::AllocaInst *ToIRVisitor::CreateEntryBlockAlloca(llvm::Type *Ty,
                                                       const llvm::Twine &Name) {
   if (!CurrentFunction) {
     llvm::report_fatal_error("Cannot create alloca: not inside a function.");
   }
-  // Create a temporary builder pointing to the function's entry block
   llvm::IRBuilder<> TmpB(
       &CurrentFunction->getEntryBlock(),
       CurrentFunction->getEntryBlock().getFirstInsertionPt());
   return TmpB.CreateAlloca(Ty, nullptr, Name);
 }
-// --- END NEW HELPER ---
+// --- END CreateEntryBlockAlloca ---
 
 // --- Dispatcher Implementation ---
 void ToIRVisitor::visit(Expr &Node) {
   switch (Node.getKind()) {
-    // ... (Keep existing cases: Prim, Int, Var, Let, Bool, If, SetBang, Begin,
-    // WhileLoop, Void, VectorLiteral) ...
+    // --- Updated to ensure all cases are present ---
   case Expr::ExprPrim:
     llvm::cast<Prim>(Node).accept(*this);
     break;
@@ -169,12 +161,11 @@ void ToIRVisitor::visit(Expr &Node) {
   case Expr::ExprVectorLiteral:
     llvm::cast<VectorLiteral>(Node).accept(*this);
     break;
-  // --- ADDED Case ---
   case Expr::ExprApply:
     llvm::cast<Apply>(Node).accept(*this);
     break;
-  // --- END ADDED Case ---
+  // --- End Updated ---
   default:
-    llvm_unreachable("Unknown Expr kind");
+    llvm_unreachable("Unknown Expr kind in CodeGen dispatcher");
   }
 }
