@@ -55,6 +55,33 @@ llvm::FunctionType *ToIRVisitor::getLLVMFunctionTypeFromDef(Def &Node) {
 }
 // +++ END HELPER FUNCTION +++
 
+void ToIRVisitor::preRegisterFunctions(const std::vector<Def*>& functions) {
+  for (Def* defNode : functions) {
+    StringRef FuncName = defNode->getName();
+    
+    // Skip if already registered
+    if (GlobalFunctions.count(FuncName))
+      continue;
+      
+    // Create function type from definition
+    llvm::FunctionType *LLVMFuncTy = getLLVMFunctionTypeFromDef(*defNode);
+    if (!LLVMFuncTy) {
+      report_fatal_error("CodeGen Error: Could not derive LLVM FunctionType for " + FuncName);
+    }
+    
+    // Create function declaration only (no body)
+    Function *TheFunction = Function::Create(
+      LLVMFuncTy, 
+      GlobalValue::ExternalLinkage, 
+      FuncName, 
+      M
+    );
+    
+    // Register in global functions map
+    GlobalFunctions[FuncName] = TheFunction;
+  }
+}
+
 void ToIRVisitor::visit(Def &Node) {
   StringRef FuncName = Node.getName();
 
@@ -245,12 +272,24 @@ void ToIRVisitor::visit(Apply &Node) {
   Node.getFnExpr()->accept(*this);
   Value *FnValue = V;
   if (!FnValue) {
-    llvm::errs() << "CodeGen Error: Apply node's function expression evaluated "
+    // Try looking up function by name if it's a Var node
+    if (auto *varNode = dyn_cast<Var>(Node.getFnExpr())) {
+      StringRef funcName = varNode->getName();
+      if (GlobalFunctions.count(funcName)) {
+        // Use the function from the global registry
+        FnValue = GlobalFunctions[funcName];
+      }
+    }
+    
+    // If we still don't have a function value, report error
+    if (!FnValue) {
+      llvm::errs() << "CodeGen Error: Apply node's function expression evaluated "
                     "to null.\n";
-    Type *ApplyResultType = ExprTypes.lookup(&Node);
-    V = Constant::getNullValue(
-        getLLVMType(ApplyResultType ? ApplyResultType : ErrorType::get()));
-    return;
+      Type *ApplyResultType = ExprTypes.lookup(&Node);
+      V = Constant::getNullValue(
+          getLLVMType(ApplyResultType ? ApplyResultType : ErrorType::get()));
+      return;
+    }
   }
 
   Value *CallableFn = nullptr;

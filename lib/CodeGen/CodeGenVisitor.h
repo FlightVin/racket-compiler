@@ -82,8 +82,10 @@ class ToIRVisitor : public ASTVisitor {
   llvm::Function *getOrDeclareWriteInt();
   llvm::Function *getOrDeclareWriteBool();
   llvm::Function *getOrDeclareAllocate();
-  // <<< ADDED Declaration for initialize >>>
   llvm::Function *getOrDeclareInitialize();
+  
+  // --- Two-Pass Compilation Support ---
+  void preRegisterFunctions(const std::vector<Def*>& functions);
 
 public:
   // Constructor

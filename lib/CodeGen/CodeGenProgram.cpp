@@ -51,8 +51,18 @@ void ToIRVisitor::run(AST *Tree) {
 }
 
 void ToIRVisitor::visit(Program &Node) {
+  // First pass: collect all function definitions
+  std::vector<Def*> functionDefs;
+  for (Def* def : Node.getDefs()) {
+    if (def) {
+      functionDefs.push_back(def);
+    }
+  }
+
+  // Pre-register all function signatures before generating any code
+  preRegisterFunctions(functionDefs);
+
   // --- Generate Code for Function Definitions ---
-  // ... (iterate and call accept on Defs - unchanged) ...
   const auto &defs = Node.getDefs();
   for (Def *d : defs) {
     if (d) {
