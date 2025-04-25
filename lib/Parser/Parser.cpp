@@ -103,8 +103,9 @@ llracket::Type *Parser::parseType() {
 
 // --- Implementation of parseDef ---
 Def *Parser::parseDef() {
-  // SMLoc defStartLoc = Tok.getLocation(); // Unused warning
+  // We already consumed '(' and 'define' in parse()
 
+  // Now we expect '(' function_name [param-decls] ')'
   if (!consume(tok::l_paren))
     return nullptr;
 
@@ -113,9 +114,11 @@ Def *Parser::parseDef() {
   StringRef funcName = Tok.getText();
   advance();
 
+  // Parse parameter declarations with type annotations
   std::vector<std::pair<StringRef, llracket::Type *>> params;
   while (Tok.is(tok::l_square)) {
-    advance();
+    advance(); // Consume '['
+
     if (!expect(tok::identifier)) {
       skipUntil(tok::r_square, tok::r_paren);
       return nullptr;
@@ -127,7 +130,7 @@ Def *Parser::parseDef() {
       skipUntil(tok::r_square, tok::r_paren);
       return nullptr;
     }
-    advance();
+    advance(); // Consume ':'
 
     llracket::Type *paramType = parseType();
     if (!paramType) {
@@ -143,11 +146,17 @@ Def *Parser::parseDef() {
     params.push_back({paramName, paramType});
   }
 
-  if (!consume(tok::r_paren))
+  if (!consume(
+          tok::r_paren)) // Consume closing paren after function name and params
     return nullptr;
 
-  if (!consume(tok::colon))
+  if (!expect(tok::colon)) {
+    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
+                 "':'");
+    skipUntil(tok::r_paren);
     return nullptr;
+  }
+  advance(); // Consume ':'
 
   llracket::Type *returnType = parseType();
   if (!returnType) {
@@ -171,32 +180,33 @@ Def *Parser::parseDef() {
 // --- END parseDef ---
 
 // --- Parser::parse Method ---
+
 AST *Parser::parse() {
   std::vector<Def *> definitions;
   ProgramInfo info;
   unsigned errorsBeforeParse = Diags.numErrors();
 
   // Loop to parse definitions
-  while (true) {
-    if (Tok.is(tok::l_paren)) {
-      Token peekTok = Lex.peek(1);      // Assumes peek exists and works
-      if (peekTok.is(tok::kw_define)) { // <<< FIXED: Use correct token kind
-        advance();
-        advance(); // Consume '( define'
-        Def *definition = parseDef();
-        if (definition) {
-          definitions.push_back(definition);
-        } else {
-          llvm::errs() << "Syntax error occurred during definition parsing.\n";
-          for (Def *d : definitions)
-            delete d;
-          return nullptr;
-        }
+  while (Tok.is(tok::l_paren)) {
+    // Use peek to check if the next token is 'define'
+    Token peekTok = Lex.peek(0);
+
+    // If the next token is 'define', we're looking at a definition
+    if (peekTok.is(tok::identifier) && peekTok.getText() == "define") {
+      advance(); // Consume '('
+      advance(); // Consume 'define'
+      Def *definition = parseDef();
+      if (definition) {
+        definitions.push_back(definition);
       } else {
-        break; // It's the main expression
+        llvm::errs() << "Syntax error occurred during definition parsing.\n";
+        for (Def *d : definitions)
+          delete d;
+        return nullptr;
       }
     } else {
-      break; // It's the main expression or EOF/Error
+      // Not a definition, must be the main expression
+      break;
     }
   }
 

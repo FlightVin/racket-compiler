@@ -21,12 +21,12 @@ class Constant;
 class Function;
 class BasicBlock;
 class AllocaInst;
-class FunctionType;
+class FunctionType; // Make sure FunctionType is forward declared
 } // namespace llvm
 
 // Forward declare AST nodes
 class Expr;
-class Def;
+class Def; // Ensure Def is forward declared for the helper function
 class Apply;
 
 namespace llracket {
@@ -72,6 +72,7 @@ class ToIRVisitor : public ASTVisitor {
   // --- Private Helper Methods ---
   llvm::Type *getLLVMType(Type *T);
   llvm::FunctionType *getLLVMFunctionType(FunctionType *FTy);
+  llvm::FunctionType *getLLVMFunctionTypeFromDef(Def &Node);
   llvm::PointerType *getLLVMPtrType(Type *T);
   llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Type *Ty,
                                            const llvm::Twine &Name = "");
