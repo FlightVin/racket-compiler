@@ -5,9 +5,9 @@
 #include "llracket/Basic/Diagnostic.h"
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
-#include <utility> // For std::pair
-#include <vector>
 #include <unordered_set> // For skipUntil
+#include <utility>       // For std::pair
+#include <vector>
 
 // Forward declare Type class is NOT needed because AST.h includes Type.h
 

@@ -31,7 +31,9 @@ class VectorLiteral;
 class Apply;
 
 // Forward declare llracket::Type explicitly for clarity in this header context
-namespace llracket { class Type; }
+namespace llracket {
+class Type;
+}
 
 class ASTVisitor {
 public:
@@ -78,12 +80,23 @@ public:
 class Expr : public AST {
 public:
   enum ExprKind {
-    ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf,
-    ExprSetBang, ExprBegin, ExprWhileLoop, ExprVoid, ExprVectorLiteral,
+    ExprPrim,
+    ExprInt,
+    ExprVar,
+    ExprLet,
+    ExprBool,
+    ExprIf,
+    ExprSetBang,
+    ExprBegin,
+    ExprWhileLoop,
+    ExprVoid,
+    ExprVectorLiteral,
     ExprApply
   };
+
 private:
   const ExprKind Kind;
+
 public:
   Expr(ExprKind Kind) : Kind(Kind) {}
   ExprKind getKind() const { return Kind; }
@@ -257,39 +270,44 @@ public:
 
 class Def : public AST {
   StringRef Name;
-  std::vector<std::pair<StringRef, llracket::Type*>> Params; // <<< QUALIFIED
-  llracket::Type* ReturnType; // <<< QUALIFIED
-  Expr* Body;
+  std::vector<std::pair<StringRef, llracket::Type *>> Params; // <<< QUALIFIED
+  llracket::Type *ReturnType;                                 // <<< QUALIFIED
+  Expr *Body;
 
 public:
-  Def(StringRef Name, std::vector<std::pair<StringRef, llracket::Type*>> Params, // <<< QUALIFIED
-      llracket::Type* ReturnType, Expr* Body) // <<< QUALIFIED
-      : Name(Name), Params(std::move(Params)), ReturnType(ReturnType), Body(Body) {}
+  Def(StringRef Name,
+      std::vector<std::pair<StringRef, llracket::Type *>>
+          Params,                             // <<< QUALIFIED
+      llracket::Type *ReturnType, Expr *Body) // <<< QUALIFIED
+      : Name(Name), Params(std::move(Params)), ReturnType(ReturnType),
+        Body(Body) {}
 
   StringRef getName() const { return Name; }
-  const std::vector<std::pair<StringRef, llracket::Type*>>& getParams() const { return Params; } // <<< QUALIFIED
-  llracket::Type* getReturnType() const { return ReturnType; } // <<< QUALIFIED
-  Expr* getBody() const { return Body; }
+  const std::vector<std::pair<StringRef, llracket::Type *>> &getParams() const {
+    return Params;
+  }                                                            // <<< QUALIFIED
+  llracket::Type *getReturnType() const { return ReturnType; } // <<< QUALIFIED
+  Expr *getBody() const { return Body; }
 
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 };
 
 class Apply : public Expr {
-Expr *FnExpr;
-std::vector<Expr *> Args;
+  Expr *FnExpr;
+  std::vector<Expr *> Args;
 
 public:
-Apply(Expr *FnExpr, std::vector<Expr *> Args)
-    : Expr(ExprApply), FnExpr(FnExpr), Args(std::move(Args)) {
-  assert(FnExpr && "Function expression cannot be null in Apply node");
-}
+  Apply(Expr *FnExpr, std::vector<Expr *> Args)
+      : Expr(ExprApply), FnExpr(FnExpr), Args(std::move(Args)) {
+    assert(FnExpr && "Function expression cannot be null in Apply node");
+  }
 
-Expr *getFnExpr() const { return FnExpr; }
-const std::vector<Expr *> &getArgs() const { return Args; }
+  Expr *getFnExpr() const { return FnExpr; }
+  const std::vector<Expr *> &getArgs() const { return Args; }
 
-virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
-static bool classof(const Expr *E) { return E->getKind() == ExprApply; }
+  static bool classof(const Expr *E) { return E->getKind() == ExprApply; }
 };
 
 #endif // LLRACKET_AST_AST_H

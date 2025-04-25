@@ -41,10 +41,11 @@ bool Sema::semantic(AST *Tree) {
 
 // --- TypeCheckVisitor Constructor Implementation ---
 TypeCheckVisitor::TypeCheckVisitor(
-  DiagnosticsEngine &D,
-  llvm::DenseMap<Expr *, Type *> &ET, // Use llracket::Type implicitly via namespace
-  llvm::StringMap<Type *> &VT)
-  : Diags(D), ExprTypes(ET), CurrentVarTypes(VT), HasError(false) {}
+    DiagnosticsEngine &D,
+    llvm::DenseMap<Expr *, Type *>
+        &ET, // Use llracket::Type implicitly via namespace
+    llvm::StringMap<Type *> &VT)
+    : Diags(D), ExprTypes(ET), CurrentVarTypes(VT), HasError(false) {}
 
 // --- TypeCheckVisitor Helper Method Implementations ---
 

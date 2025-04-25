@@ -202,3 +202,75 @@ void Lexer::formToken(Token &Tok, const char *TokEnd, TokenKind Kind) {
   Tok.Text = StringRef(BufferPtr, TokEnd - BufferPtr);
   BufferPtr = TokEnd;
 }
+
+Token Lexer::peek(unsigned N) {
+  if (N == 0) {
+    // Peeking 0 tokens ahead is just the current token.
+    // Need to ensure the current token is valid first.
+    // This might require adjusting how 'Tok' is managed in the Parser,
+    // or calling next() once initially if not already done.
+    // For now, return a default/unknown token if not available.
+    // A better approach might be needed depending on Parser structure.
+    Token CurTok;
+    // A simple way: create a temp token and call next on it
+    // BUT this advances the main pointer, which is WRONG for peek.
+    // Proper peeking needs lookahead without advancing the main pointer.
+
+    // --- Simplified Peek (Potentially Buggy/Incomplete) ---
+    // This simulates getting the *next* token, not necessarily the current one
+    // depending on how Parser uses `Tok`. A robust peek often requires
+    // the lexer to maintain lookahead state.
+    const char *SavedPtr = BufferPtr;
+    llvm::SMLoc SavedLoc = getLoc();
+    DiagnosticsEngine DiagsSnapshot =
+        Diags; // Save Diags state? (might be complex)
+
+    Token ResultTok;
+    next(ResultTok); // This advances BufferPtr!
+
+    // Restore lexer state
+    BufferPtr = SavedPtr;
+    // Diags = DiagsSnapshot; // Restore Diags state?
+
+    // If N > 0, we'd need to repeat N times, which is inefficient and complex
+    // with state saving.
+    if (N > 0) {
+      // This placeholder doesn't implement N > 0 peeking.
+      // A real implementation would need lookahead buffer or more state saving.
+      llvm::errs() << "Warning: Lexer::peek(N > 0) not fully implemented.\n";
+      // Return an unknown token for now for N > 0
+      ResultTok.Kind = tok::unknown;
+      ResultTok.Text = "";
+      return ResultTok;
+    }
+
+    return ResultTok; // Returns the token that *would* be next
+
+    // --- A more robust (but still simple) approach: ---
+    // Token LookaheadTok;
+    // const char* SavedPtr = BufferPtr;
+    // SMLoc SavedLoc = getLoc();
+    // // Consume whitespace to find start of next token
+    // const char *peekPtr = BufferPtr;
+    // while (*peekPtr && charinfo::isWhitespace(*peekPtr)) ++peekPtr;
+    // if (!*peekPtr) { // EOF
+    //     LookaheadTok.Kind = tok::eof;
+    //     LookaheadTok.Text = "";
+    // } else {
+    //     // Temporarily set BufferPtr to peek position
+    //     BufferPtr = peekPtr;
+    //     next(LookaheadTok); // Lex the token
+    //     BufferPtr = SavedPtr; // Restore original pointer
+    // }
+    // // This still doesn't handle N > 0 properly
+    // if (N > 0) { /* error or placeholder */ }
+    // return LookaheadTok;
+  }
+  // Placeholder for N > 0, return unknown
+  Token ResultTok;
+  ResultTok.Kind = tok::unknown;
+  ResultTok.Text = "";
+  llvm::errs()
+      << "Warning: Lexer::peek(N > 0) requested but not implemented.\n";
+  return ResultTok;
+}

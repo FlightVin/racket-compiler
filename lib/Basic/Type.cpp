@@ -74,14 +74,15 @@ bool VectorType::equals(const Type *Other) const {
 }
 
 // --- FunctionType Implementation ---
-FunctionType *FunctionType::get(std::vector<Type *> ParamTypes, Type *ReturnType) {
+FunctionType *FunctionType::get(std::vector<Type *> ParamTypes,
+                                Type *ReturnType) {
   // TODO: Add uniquing/caching if needed
   return new FunctionType(std::move(ParamTypes), ReturnType);
 }
 std::string FunctionType::getName() const {
   std::stringstream ss;
   ss << "(->";
-  for (const auto* ParamTy : ParamTypes) {
+  for (const auto *ParamTy : ParamTypes) {
     ss << " " << (ParamTy ? ParamTy->getName() : "<nulltype>");
   }
   ss << " " << (ReturnType ? ReturnType->getName() : "<nulltype>");
@@ -90,13 +91,17 @@ std::string FunctionType::getName() const {
 }
 
 bool FunctionType::equals(const Type *Other) const {
-  if (this == Other) return true;
-  if (!Other || !llvm::isa<FunctionType>(Other)) return false; // Use llvm::isa
+  if (this == Other)
+    return true;
+  if (!Other || !llvm::isa<FunctionType>(Other))
+    return false; // Use llvm::isa
 
-  const FunctionType *OtherFunc = llvm::cast<FunctionType>(Other); // Use llvm::cast
+  const FunctionType *OtherFunc =
+      llvm::cast<FunctionType>(Other); // Use llvm::cast
 
   if (ReturnType != OtherFunc->ReturnType) {
-    if (!ReturnType || !OtherFunc->ReturnType || !ReturnType->equals(OtherFunc->ReturnType)) {
+    if (!ReturnType || !OtherFunc->ReturnType ||
+        !ReturnType->equals(OtherFunc->ReturnType)) {
       return false;
     }
   }
@@ -118,6 +123,5 @@ bool FunctionType::equals(const Type *Other) const {
   return true;
 }
 // --- END FunctionType Implementation ---
-
 
 } // namespace llracket

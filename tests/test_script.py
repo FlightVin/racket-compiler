@@ -7,7 +7,9 @@ parser = argparse.ArgumentParser(description="Run tests for llracket.")
 parser.add_argument("--llracket", required=True, help="Path to the llracket binary.")
 parser.add_argument("--runtime", required=True, help="Path to the runtime.c file.")
 parser.add_argument("--build-dir", required=True, help="Path to the build directory.")
-parser.add_argument("--single-test", help="Path to a single test file to run.", default=None)
+parser.add_argument(
+    "--single-test", help="Path to a single test file to run.", default=None
+)
 args = parser.parse_args()
 
 
@@ -110,34 +112,34 @@ def main():
         if not os.path.exists(args.single_test):
             print(f"Error: Test file {args.single_test} does not exist.")
             return
-        
+
         test_program = args.single_test
         test_input_file = test_program.replace(".rkt", ".rkt.in")
         test_output_file = test_program.replace(".rkt", ".rkt.out")
         err_file = test_program.replace(".rkt", ".rkt.err")
-        
+
         test_input = ""
         test_output = ""
         expect_compile_error = False
-        
+
         if os.path.exists(test_input_file):
-            with open(test_input_file, 'r') as f:
+            with open(test_input_file, "r") as f:
                 test_input = f.read()
-        
+
         if os.path.exists(test_output_file):
-            with open(test_output_file, 'r') as f:
+            with open(test_output_file, "r") as f:
                 test_output = f.read()
-        
+
         if os.path.exists(err_file):
             expect_compile_error = True
-        
+
         run_test(
             test_program,
             test_input,
             test_output,
             expect_compile_error,
             build_test_dir,
-            quiet=False
+            quiet=False,
         )
         return
 

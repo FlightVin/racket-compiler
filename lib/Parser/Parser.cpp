@@ -5,23 +5,29 @@
 #include "llracket/Lexer/Token.h"
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
-#include <utility> // For std::move, std::pair
-#include <vector>  // Ensure vector is included
 #include <unordered_set> // For skipUntil
+#include <utility>       // For std::move, std::pair
+#include <vector>        // Ensure vector is included
 
 using namespace llracket;
 using tok::TokenKind;
-
 
 // --- Implementation of parseType ---
 llracket::Type *Parser::parseType() {
   if (Tok.is(tok::identifier)) {
     StringRef typeName = Tok.getText();
-    if (typeName == "Integer") { advance(); return IntegerType::get(); }
-    else if (typeName == "Boolean") { advance(); return BooleanType::get(); }
-    else if (typeName == "Void") { advance(); return VoidType::get(); }
-    else {
-      Diags.report(Tok.getLocation(), diag::err_unexpected_token, typeName, "valid base type (Integer, Boolean, Void)");
+    if (typeName == "Integer") {
+      advance();
+      return IntegerType::get();
+    } else if (typeName == "Boolean") {
+      advance();
+      return BooleanType::get();
+    } else if (typeName == "Void") {
+      advance();
+      return VoidType::get();
+    } else {
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, typeName,
+                   "valid base type (Integer, Boolean, Void)");
       return nullptr;
     }
   } else if (Tok.is(tok::l_paren)) {
@@ -34,46 +40,62 @@ llracket::Type *Parser::parseType() {
         llracket::Type *elemType = parseType();
         if (!elemType) {
           skipUntil(tok::r_paren);
-          if (Tok.is(tok::r_paren)) advance();
+          if (Tok.is(tok::r_paren))
+            advance();
           return nullptr;
         }
         elementTypes.push_back(elemType);
       }
-      if (!consume(tok::r_paren)) return nullptr;
+      if (!consume(tok::r_paren))
+        return nullptr;
       return VectorType::get(std::move(elementTypes));
-    } else if (Tok.is(tok::l_paren) || Tok.is(tok::identifier) || Tok.is(tok::minus)) {
+    } else if (Tok.is(tok::l_paren) || Tok.is(tok::identifier) ||
+               Tok.is(tok::minus)) {
       std::vector<llracket::Type *> paramTypes;
       while (!Tok.is(tok::minus) && !Tok.is(tok::eof)) {
         if (Tok.is(tok::r_paren)) {
-          Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(), "'->' or parameter type");
+          Diags.report(Tok.getLocation(), diag::err_unexpected_token,
+                       Tok.getText(), "'->' or parameter type");
           return nullptr;
         }
         llracket::Type *paramType = parseType();
-        if (!paramType) { return nullptr; }
+        if (!paramType) {
+          return nullptr;
+        }
         paramTypes.push_back(paramType);
 
         if (Tok.is(tok::minus)) {
           Token peekTok = Lex.peek(1); // Assumes peek exists and works
-          if (peekTok.is(tok::gt)) break;
-          Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(), "'>' after '-' or another parameter type");
+          if (peekTok.is(tok::gt))
+            break;
+          Diags.report(Tok.getLocation(), diag::err_unexpected_token,
+                       Tok.getText(),
+                       "'>' after '-' or another parameter type");
           return nullptr;
         }
       }
 
-      if (!consume(tok::minus)) return nullptr;
-      if (!consume(tok::gt)) return nullptr;
+      if (!consume(tok::minus))
+        return nullptr;
+      if (!consume(tok::gt))
+        return nullptr;
 
       llracket::Type *returnType = parseType();
-      if (!returnType) { return nullptr; }
+      if (!returnType) {
+        return nullptr;
+      }
 
-      if (!consume(tok::r_paren)) return nullptr;
+      if (!consume(tok::r_paren))
+        return nullptr;
       return FunctionType::get(std::move(paramTypes), returnType);
     } else {
-      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(), "'Vector' or function type parameter list");
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
+                   "'Vector' or function type parameter list");
       return nullptr;
     }
   } else {
-    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(), "type name or '('");
+    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
+                 "type name or '('");
     return nullptr;
   }
 }
@@ -83,39 +105,61 @@ llracket::Type *Parser::parseType() {
 Def *Parser::parseDef() {
   // SMLoc defStartLoc = Tok.getLocation(); // Unused warning
 
-  if (!consume(tok::l_paren)) return nullptr;
+  if (!consume(tok::l_paren))
+    return nullptr;
 
-  if (!expect(tok::identifier)) return nullptr;
+  if (!expect(tok::identifier))
+    return nullptr;
   StringRef funcName = Tok.getText();
   advance();
 
   std::vector<std::pair<StringRef, llracket::Type *>> params;
   while (Tok.is(tok::l_square)) {
     advance();
-    if (!expect(tok::identifier)) { skipUntil(tok::r_square, tok::r_paren); return nullptr; }
+    if (!expect(tok::identifier)) {
+      skipUntil(tok::r_square, tok::r_paren);
+      return nullptr;
+    }
     StringRef paramName = Tok.getText();
     advance();
 
-    if (!expect(tok::colon)) { skipUntil(tok::r_square, tok::r_paren); return nullptr; }
+    if (!expect(tok::colon)) {
+      skipUntil(tok::r_square, tok::r_paren);
+      return nullptr;
+    }
     advance();
 
     llracket::Type *paramType = parseType();
-    if (!paramType) { skipUntil(tok::r_square, tok::r_paren); return nullptr; }
+    if (!paramType) {
+      skipUntil(tok::r_square, tok::r_paren);
+      return nullptr;
+    }
 
-    if (!consume(tok::r_square)) { skipUntil(tok::r_paren); return nullptr; }
+    if (!consume(tok::r_square)) {
+      skipUntil(tok::r_paren);
+      return nullptr;
+    }
 
     params.push_back({paramName, paramType});
   }
 
-  if (!consume(tok::r_paren)) return nullptr;
+  if (!consume(tok::r_paren))
+    return nullptr;
 
-  if (!consume(tok::colon)) return nullptr;
+  if (!consume(tok::colon))
+    return nullptr;
 
   llracket::Type *returnType = parseType();
-  if (!returnType) { skipUntil(tok::r_paren); return nullptr; }
+  if (!returnType) {
+    skipUntil(tok::r_paren);
+    return nullptr;
+  }
 
   Expr *bodyExpr = parseExpr();
-  if (!bodyExpr) { skipUntil(tok::r_paren); return nullptr; }
+  if (!bodyExpr) {
+    skipUntil(tok::r_paren);
+    return nullptr;
+  }
 
   if (!consume(tok::r_paren)) {
     delete bodyExpr;
@@ -135,15 +179,17 @@ AST *Parser::parse() {
   // Loop to parse definitions
   while (true) {
     if (Tok.is(tok::l_paren)) {
-      Token peekTok = Lex.peek(1); // Assumes peek exists and works
+      Token peekTok = Lex.peek(1);      // Assumes peek exists and works
       if (peekTok.is(tok::kw_define)) { // <<< FIXED: Use correct token kind
-        advance(); advance(); // Consume '( define'
+        advance();
+        advance(); // Consume '( define'
         Def *definition = parseDef();
         if (definition) {
           definitions.push_back(definition);
         } else {
           llvm::errs() << "Syntax error occurred during definition parsing.\n";
-          for (Def *d : definitions) delete d;
+          for (Def *d : definitions)
+            delete d;
           return nullptr;
         }
       } else {
@@ -157,7 +203,8 @@ AST *Parser::parse() {
   // Parse the main expression AFTER definitions
   Expr *TheMainExpr = parseExpr();
   if (!TheMainExpr) {
-    for (Def *d : definitions) delete d;
+    for (Def *d : definitions)
+      delete d;
     if (Diags.numErrors() == errorsBeforeParse && !Tok.is(tok::eof)) {
       Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText(),
                    "main expression or definition");
@@ -169,7 +216,8 @@ AST *Parser::parse() {
   }
 
   // Construct the Program node
-  Program *P = new Program(std::move(definitions), TheMainExpr, std::move(info));
+  Program *P =
+      new Program(std::move(definitions), TheMainExpr, std::move(info));
 
   // Check for expected EOF
   if (!expect(TokenKind::eof)) {
@@ -348,31 +396,64 @@ Expr *Parser::parseExpr() {
     case TokenKind::vector_ref: {
       advance();
       Expr *vecExpr = parseExpr();
-      if (!vecExpr) return ErrorHandler("vector expression for vector-ref");
+      if (!vecExpr)
+        return ErrorHandler("vector expression for vector-ref");
       Expr *idxExpr = parseExpr();
-      if (!idxExpr) { delete vecExpr; return ErrorHandler("index expression for vector-ref"); }
-      if (idxExpr->getKind() != Expr::ExprKind::ExprInt) {
-           // <<< FIXED: Use current token's location
-           Diags.report(Tok.getLocation(), diag::err_vector_non_int_index, "Expression");
-           delete vecExpr; delete idxExpr; skipUntil(tok::r_paren); if (Tok.is(tok::r_paren)) advance(); return nullptr;
+      if (!idxExpr) {
+        delete vecExpr;
+        return ErrorHandler("index expression for vector-ref");
       }
-      if (!consume(TokenKind::r_paren)) { delete vecExpr; delete idxExpr; return ErrorHandler("')' for vector-ref"); }
+      if (idxExpr->getKind() != Expr::ExprKind::ExprInt) {
+        // <<< FIXED: Use current token's location
+        Diags.report(Tok.getLocation(), diag::err_vector_non_int_index,
+                     "Expression");
+        delete vecExpr;
+        delete idxExpr;
+        skipUntil(tok::r_paren);
+        if (Tok.is(tok::r_paren))
+          advance();
+        return nullptr;
+      }
+      if (!consume(TokenKind::r_paren)) {
+        delete vecExpr;
+        delete idxExpr;
+        return ErrorHandler("')' for vector-ref");
+      }
       return new Prim(TokenKind::vector_ref, vecExpr, idxExpr);
     }
     case TokenKind::vector_setb: {
       advance();
       Expr *vecExpr = parseExpr();
-      if (!vecExpr) return ErrorHandler("vector expression for vector-set!");
+      if (!vecExpr)
+        return ErrorHandler("vector expression for vector-set!");
       Expr *idxExpr = parseExpr();
-      if (!idxExpr) { delete vecExpr; return ErrorHandler("index expression for vector-set!"); }
+      if (!idxExpr) {
+        delete vecExpr;
+        return ErrorHandler("index expression for vector-set!");
+      }
       if (idxExpr->getKind() != Expr::ExprKind::ExprInt) {
-          // <<< FIXED: Use current token's location
-            Diags.report(Tok.getLocation(), diag::err_vector_non_int_index, "Expression");
-            delete vecExpr; delete idxExpr; skipUntil(tok::r_paren); if (Tok.is(tok::r_paren)) advance(); return nullptr;
+        // <<< FIXED: Use current token's location
+        Diags.report(Tok.getLocation(), diag::err_vector_non_int_index,
+                     "Expression");
+        delete vecExpr;
+        delete idxExpr;
+        skipUntil(tok::r_paren);
+        if (Tok.is(tok::r_paren))
+          advance();
+        return nullptr;
       }
       Expr *valExpr = parseExpr();
-      if (!valExpr) { delete vecExpr; delete idxExpr; return ErrorHandler("value expression for vector-set!"); }
-      if (!consume(TokenKind::r_paren)) { delete vecExpr; delete idxExpr; delete valExpr; return ErrorHandler("')' for vector-set!"); }
+      if (!valExpr) {
+        delete vecExpr;
+        delete idxExpr;
+        return ErrorHandler("value expression for vector-set!");
+      }
+      if (!consume(TokenKind::r_paren)) {
+        delete vecExpr;
+        delete idxExpr;
+        delete valExpr;
+        return ErrorHandler("')' for vector-set!");
+      }
       return new Prim(TokenKind::vector_setb, vecExpr, idxExpr, valExpr);
     }
     case TokenKind::read: {
@@ -431,24 +512,28 @@ Expr *Parser::parseExpr() {
 
     // --- Default case handles Application ---
     default: {
-      Expr* fnExpr = parseExpr();
-      if (!fnExpr) { return nullptr; }
+      Expr *fnExpr = parseExpr();
+      if (!fnExpr) {
+        return nullptr;
+      }
 
-      std::vector<Expr*> args;
+      std::vector<Expr *> args;
       while (!Tok.is(tok::r_paren) && !Tok.is(tok::eof)) {
-          Expr* argExpr = parseExpr();
-          if (!argExpr) {
-              delete fnExpr;
-              for(Expr* a : args) delete a;
-              return nullptr;
-          }
-          args.push_back(argExpr);
+        Expr *argExpr = parseExpr();
+        if (!argExpr) {
+          delete fnExpr;
+          for (Expr *a : args)
+            delete a;
+          return nullptr;
+        }
+        args.push_back(argExpr);
       }
 
       if (!consume(TokenKind::r_paren)) {
-          delete fnExpr;
-          for(Expr* a : args) delete a;
-          return nullptr;
+        delete fnExpr;
+        for (Expr *a : args)
+          delete a;
+        return nullptr;
       }
 
       return new Apply(fnExpr, std::move(args));

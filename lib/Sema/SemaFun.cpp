@@ -1,7 +1,7 @@
 #include "SemaVisitor.h"
 #include "llracket/AST/AST.h"
 #include "llracket/Basic/Type.h" // Includes llracket::Type
-#include "llvm/ADT/ScopeExit.h" // For restoring scope easily
+#include "llvm/ADT/ScopeExit.h"  // For restoring scope easily
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 #include <vector>
@@ -13,10 +13,10 @@ using namespace llracket::sema;
 // --- TypeCheckVisitor Methods Implementation ---
 
 // Placeholder SMLoc implementation
-llvm::SMLoc TypeCheckVisitor::getLoc(AST *Node) {
-  // TODO: Connect this to actual source locations from the parser
-  return llvm::SMLoc();
-}
+// llvm::SMLoc TypeCheckVisitor::getLoc(AST *Node) {
+//   // TODO: Connect this to actual source locations from the parser
+//   return llvm::SMLoc();
+// }
 
 // Placeholder Well-formedness check
 bool TypeCheckVisitor::checkTypeWellFormedness(Type *Ty, llvm::SMLoc Loc) {

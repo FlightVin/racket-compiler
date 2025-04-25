@@ -124,6 +124,66 @@ llvm::AllocaInst *ToIRVisitor::CreateEntryBlockAlloca(llvm::Type *Ty,
 }
 // --- END CreateEntryBlockAlloca ---
 
+// --- ADD RUNTIME HELPERS HERE ---
+
+llvm::Function *ToIRVisitor::getOrDeclareInitialize() {
+  llvm::Function *Func = M->getFunction("initialize");
+  if (!Func) {
+    // Signature: void initialize(i64, i64)
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "initialize", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareAllocate() {
+  llvm::Function *Func = M->getFunction("runtime_allocate");
+  if (!Func) {
+    llvm::PointerType *PtrTy = LLVMInt64PtrTy;
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(PtrTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "runtime_allocate", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareReadValue() {
+  llvm::Function *Func = M->getFunction("read_value");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMInt32Ty, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "read_value", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareWriteInt() {
+  llvm::Function *Func = M->getFunction("write_int");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "write_int", M);
+  }
+  return Func;
+}
+
+llvm::Function *ToIRVisitor::getOrDeclareWriteBool() {
+  llvm::Function *Func = M->getFunction("write_bool");
+  if (!Func) {
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false);
+    Func = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                  "write_bool", M);
+  }
+  return Func;
+}
+// --- END RUNTIME HELPERS ---
+
 // --- Dispatcher Implementation ---
 void ToIRVisitor::visit(Expr &Node) {
   switch (Node.getKind()) {

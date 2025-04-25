@@ -17,78 +17,45 @@ using namespace llracket::codegen;
 // --- Implementation of ToIRVisitor methods ---
 
 void ToIRVisitor::run(AST *Tree) {
-  // Set up the 'main' function wrapper
-  FunctionType *MainFty =
-      FunctionType::get(LLVMInt32Ty, {}, false); // main returns i32 exit code
+  // ... (Setup main function, call initialize) ...
+  llvm::FunctionType *MainFty = llvm::FunctionType::get(LLVMInt32Ty, false);
   Function *MainFn =
       Function::Create(MainFty, GlobalValue::ExternalLinkage, "main", M);
   BasicBlock *BB = BasicBlock::Create(Ctx, "entry", MainFn);
   Builder.SetInsertPoint(BB);
-
-  // Set current function context for main
   CurrentFunction = MainFn;
-
-  // --- ADDED: Call initialize from runtime ---
-  // TODO: Get root stack size and heap size from config or command line
-  // Using placeholder values for now.
-  Constant *rootStackSize =
-      ConstantInt::get(LLVMInt64Ty, 16384);                  // Example size
-  Constant *heapSize = ConstantInt::get(LLVMInt64Ty, 16384); // Example size
-  Function *InitFn = M->getFunction("initialize"); // Need to declare this
-  if (!InitFn) {
-    PointerType *PtrTy =
-        PointerType::getUnqual(LLVMInt64Ty); // Assuming runtime.h aligns
-    FunctionType *FT =
-        FunctionType::get(LLVMVoidTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
-    InitFn = Function::Create(FT, Function::ExternalLinkage, "initialize", M);
-  }
-  Builder.CreateCall(InitFn, {rootStackSize, heapSize});
-  // --- END ADDED ---
-
-  // Store the current insert block for main's entry
   BasicBlock *mainEntryBB = BB;
 
-  // Accept the Program node. This will generate definitions AND
-  // come back here to generate the code for the main expression inside main.
-  Tree->accept(*this);
+  // Call initialize
+  Constant *rootStackSize = ConstantInt::get(LLVMInt64Ty, 16384);
+  Constant *heapSize = ConstantInt::get(LLVMInt64Ty, 16384);
+  Function *InitFn = getOrDeclareInitialize();
+  Builder.CreateCall(InitFn, {rootStackSize, heapSize});
 
-  // Ensure the builder is pointing back to the main function's exit path
-  // and the block is terminated.
-  if (!CurrentFunction || CurrentFunction != MainFn) {
-    llvm::errs()
-        << "Codegen Error: Function context mismatch after visiting Program.\n";
-    CurrentFunction = MainFn; // Attempt recovery
-    if (MainFn->empty()) {    // If entry block was somehow removed
-      mainEntryBB = BasicBlock::Create(Ctx, "entry", MainFn);
-    } else {
-      mainEntryBB =
-          &MainFn->getEntryBlock(); // Use existing entry or last block
-      if (!MainFn->back().empty())
-        mainEntryBB = &MainFn->back();
-    }
-    Builder.SetInsertPoint(mainEntryBB);
-    if (!Builder.GetInsertBlock()->getTerminator()) {
-      Builder.CreateRet(LLVMInt32One); // Return error code
-    }
-  } else if (!Builder.GetInsertBlock()->getTerminator()) {
-    llvm::errs() << "Codegen WARNING: Main function block not terminated after "
-                    "Program visit. Adding default return 0.\n";
-    Builder.CreateRet(LLVMInt32Zero);
+  Tree->accept(*this); // Generate defs and main expr code
+
+  // --- Final checks and return for main ---
+  // Ensure the block is terminated. If not (e.g., due to an error during
+  // mainExpr visit or empty mainExpr), return a non-zero exit code.
+  if (!Builder.GetInsertBlock()->getTerminator()) {
+    llvm::errs() << "Codegen WARNING: Main function block not terminated "
+                    "naturally. Adding default return 1.\n";
+    Builder.CreateRet(LLVMInt32One); // Indicate potential issue
   }
-  CurrentFunction = nullptr; // Clear current function after main is done
+  CurrentFunction = nullptr;
 
-  // Verify main function
   if (verifyFunction(*MainFn, &errs())) {
     llvm::errs() << "LLVM Function verification failed for main.\n";
+    // M->dump();
   }
 }
 
 void ToIRVisitor::visit(Program &Node) {
   // --- Generate Code for Function Definitions ---
+  // ... (iterate and call accept on Defs - unchanged) ...
   const auto &defs = Node.getDefs();
   for (Def *d : defs) {
     if (d) {
-      // This calls the implementation in CodeGenFun.cpp
       d->accept(*this);
     }
   }
@@ -97,23 +64,17 @@ void ToIRVisitor::visit(Program &Node) {
   Expr *mainExpr = Node.getMainExpr();
   Function *MainFn = M->getFunction("main");
   if (!MainFn) {
-    llvm::report_fatal_error("CodeGen Internal Error: 'main' function not "
-                             "found during Program visit body generation.");
+    llvm::report_fatal_error(
+        "CodeGen Internal Error: 'main' function lost during Program visit.");
   }
+  CurrentFunction = MainFn; // Ensure context is set for main expression
 
-  // Set context back to main function's current insert point
-  // (which should be the entry block initially set by run())
-  CurrentFunction = MainFn;
+  // Reset builder to an appropriate block in main if needed
   if (Builder.GetInsertBlock()->getParent() != MainFn) {
-    // If generating definitions changed the insert point parent, reset it.
-    // Find the last block if entry block already has terminator
-    BasicBlock *targetBB = &MainFn->getEntryBlock();
-    if (targetBB->getTerminator()) {
-      if (!MainFn->empty())
-        targetBB = &MainFn->back();
-      else
-        targetBB = BasicBlock::Create(Ctx, "main.body",
-                                      MainFn); // Create new if needed
+    BasicBlock *targetBB = &MainFn->back(); // Append to the last block added
+    if (!targetBB || targetBB->getTerminator()) { // Or create new if last block
+                                                  // is terminated/empty
+      targetBB = BasicBlock::Create(Ctx, "main.body", MainFn);
     }
     Builder.SetInsertPoint(targetBB);
   }
@@ -122,114 +83,136 @@ void ToIRVisitor::visit(Program &Node) {
     mainExpr->accept(*this); // Visit the main expression - result in V
 
     Type *finalType = ExprTypes.lookup(mainExpr);
-    llvm::Type *expectedLLVMType = nullptr;
-    Value *finalV = V;
+    Value *finalV = V; // This is the computed Racket value
 
-    if (!finalType || finalType == ErrorType::get()) {
-      finalType = IntegerType::get();
-      expectedLLVMType = LLVMInt32Ty;
-      finalV = LLVMInt32One; // Return 1 for error by default
-      llvm::errs() << "Codegen Warning: Main expression has Error/Unknown "
-                      "type. Returning 1.\n";
-    } else {
-      expectedLLVMType = getLLVMType(finalType);
-    }
-
+    // Check if visit resulted in error/null value
     if (!finalV) {
-      llvm::errs() << "Codegen Error: Null value 'V' for main expression. "
-                      "Returning 1.\n";
-      finalV = ConstantInt::get(LLVMInt32Ty, 1); // Error exit code
-      expectedLLVMType = LLVMInt32Ty;            // Force expected type
-    } else if (finalV->getType() != expectedLLVMType) {
-      // Attempt Cast/Fixup
-      if (expectedLLVMType == LLVMInt32Ty && finalV->getType() == LLVMInt1Ty) {
-        finalV = Builder.CreateZExt(finalV, LLVMInt32Ty, "main_bool2int_ret");
-      } else { // Add more casts if needed (e.g. Bool returning 0/1)
-        llvm::errs() << "Codegen Warning: Type mismatch for main expression "
-                        "return. Expected "
-                     << *expectedLLVMType << ", got " << *finalV->getType()
-                     << ". Returning 1.\n";
-        finalV = ConstantInt::get(LLVMInt32Ty, 1); // Error exit code
-      }
-    }
-
-    // Main function must return Int32 (exit code)
-    if (finalV->getType() == LLVMInt32Ty) {
-      // Optional: Print result before returning exit code
-      if (finalType == IntegerType::get()) {
-        getOrDeclareWriteInt();
-        Builder.CreateCall(M->getFunction("write_int"), {finalV});
-      } else if (finalType == BooleanType::get()) {
-        // The finalV here would be the already-cast i32 version if needed
-        getOrDeclareWriteBool();
-        Builder.CreateCall(M->getFunction("write_bool"), {finalV});
-      } // Add other prints if desired
-
-      // Check if block already terminated before adding return
-      if (!Builder.GetInsertBlock()->getTerminator()) {
-        Builder.CreateRet(finalV);
-      }
-    } else {
-      // Should not happen if type checking and casting above worked
-      llvm::errs() << "Codegen Error: Main expression did not result in Int32 "
-                      "for exit code. Type: "
-                   << *finalV->getType() << "\n";
+      llvm::errs() << "Codegen Error: Null result from main expression. "
+                      "Returning exit code 1.\n";
       if (!Builder.GetInsertBlock()->getTerminator()) {
         Builder.CreateRet(LLVMInt32One); // Error exit code
       }
+      return; // Stop further processing for this path
+    }
+
+    // Get expected LLVM type based on Sema type
+    llvm::Type *llvmExpectedType = nullptr;
+    if (!finalType || finalType == ErrorType::get()) {
+      llvm::errs() << "Codegen Warning: Main expression has Error/Unknown "
+                      "type. Returning exit code 1.\n";
+      finalType = ErrorType::get();   // Mark as error type
+      llvmExpectedType = LLVMInt32Ty; // Expect int for exit code logic
+      if (!Builder.GetInsertBlock()->getTerminator()) {
+        Builder.CreateRet(LLVMInt32One); // Error exit code
+      }
+      return;
+    } else {
+      llvmExpectedType = getLLVMType(finalType);
+    }
+
+    // Perform necessary casts *for printing*
+    Value *valToPrint = finalV;
+    if (finalV->getType() != llvmExpectedType) {
+      // Attempt basic casts for printing
+      if (llvmExpectedType == LLVMInt32Ty && finalV->getType() == LLVMInt1Ty) {
+        valToPrint = Builder.CreateZExt(finalV, LLVMInt32Ty, "print_bool2int");
+      } else if (llvmExpectedType == LLVMInt1Ty &&
+                 finalV->getType() == LLVMInt32Ty) {
+        // write_bool expects i32 0/1
+        valToPrint =
+            Builder.CreateICmpNE(finalV, LLVMInt32Zero, "print_int2bool");
+        valToPrint =
+            Builder.CreateZExt(valToPrint, LLVMInt32Ty, "print_bool_as_int");
+      } else {
+        llvm::errs() << "Codegen Warning: Cannot cast main expression result "
+                        "type for printing. Type: "
+                     << *finalV->getType() << "\n";
+        valToPrint = nullptr; // Indicate printing is not possible
+      }
+    } else if (finalType == BooleanType::get() &&
+               llvmExpectedType == LLVMInt1Ty) {
+      // Cast boolean i1 to i32 for write_bool
+      valToPrint = Builder.CreateZExt(finalV, LLVMInt32Ty, "print_bool_as_int");
+    }
+
+    // --- Generate Write Call (based on Racket semantics) ---
+    if (valToPrint) { // Only print if value is valid and castable
+      if (finalType == IntegerType::get()) {
+        Function *WriteFn = getOrDeclareWriteInt();
+        Builder.CreateCall(WriteFn, {valToPrint});
+      } else if (finalType == BooleanType::get()) {
+        Function *WriteFn = getOrDeclareWriteBool();
+        Builder.CreateCall(WriteFn, {valToPrint}); // Pass the i32 version
+      } else if (finalType == VoidType::get()) {
+        // Optionally print "(void)" or nothing
+      }
+      // Add other types if needed
+    }
+
+    // --- ALWAYS Return 0 from main on successful completion ---
+    if (!Builder.GetInsertBlock()->getTerminator()) {
+      Builder.CreateRet(LLVMInt32Zero); // <<< FIXED: Return 0 for success
     }
 
   } else {
     llvm::errs() << "Codegen Error: Program has no main expression.\n";
     if (!Builder.GetInsertBlock()->getTerminator()) {
-      Builder.CreateRet(LLVMInt32Zero); // Default exit code 0
+      Builder.CreateRet(
+          LLVMInt32One); // Return 1 for error (missing expression)
     }
   }
-  // CurrentFunction is reset by the caller (run)
 }
 
-// --- Runtime Helper Function Implementations ---
-// Need to add initialize declaration
-Function *ToIRVisitor::getOrDeclareAllocate() {
-  // Implementation from CodeGenVector.cpp assumed here
-  Function *Func = M->getFunction("runtime_allocate");
-  if (!Func) {
-    PointerType *PtrTy = LLVMInt64PtrTy;
-    FunctionType *FT =
-        FunctionType::get(PtrTy, {LLVMInt64Ty, LLVMInt64Ty}, false);
-    Func = Function::Create(FT, GlobalValue::ExternalLinkage,
-                            "runtime_allocate", M);
-  }
-  return Func;
-}
+// // --- Runtime Helper Function Implementations ---
+// llvm::Function *ToIRVisitor::getOrDeclareInitialize() {
+//   Function *Func = M->getFunction("initialize");
+//   if (!Func) {
+//       // Signature: void initialize(i64, i64)
+//       llvm::FunctionType *FT = llvm::FunctionType::get(LLVMVoidTy,
+//       {LLVMInt64Ty, LLVMInt64Ty}, false); Func = llvm::Function::Create(FT,
+//       Function::ExternalLinkage, "initialize", M);
+//   }
+//   return Func;
+// }
 
-// --- Runtime Helper Function Implementations (Now Methods) ---
-
-Function *ToIRVisitor::getOrDeclareReadValue() {
-  Function *Func = M->getFunction("read_value");
-  if (!Func) {
-    // Runtime takes i32 type hint (0=Int, 1=Bool), returns i32
-    FunctionType *FT = FunctionType::get(LLVMInt32Ty, {LLVMInt32Ty}, false);
-    Func = Function::Create(FT, GlobalValue::ExternalLinkage, "read_value", M);
-  }
-  return Func;
-}
-
-Function *ToIRVisitor::getOrDeclareWriteInt() {
-  Function *Func = M->getFunction("write_int");
-  if (!Func) {
-    FunctionType *FT = FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false);
-    Func = Function::Create(FT, GlobalValue::ExternalLinkage, "write_int", M);
-  }
-  return Func;
-}
-
-Function *ToIRVisitor::getOrDeclareWriteBool() {
-  Function *Func = M->getFunction("write_bool");
-  if (!Func) {
-    FunctionType *FT =
-        FunctionType::get(LLVMVoidTy, {LLVMInt32Ty}, false); // Takes i32 (0/1)
-    Func = Function::Create(FT, GlobalValue::ExternalLinkage, "write_bool", M);
-  }
-  return Func;
-}
+// llvm::Function *ToIRVisitor::getOrDeclareAllocate() {
+//     Function *Func = M->getFunction("runtime_allocate");
+//     if (!Func) {
+//         llvm::PointerType* PtrTy = LLVMInt64PtrTy;
+//         // Correct llvm::FunctionType::get usage
+//         llvm::FunctionType *FT = llvm::FunctionType::get(PtrTy, {LLVMInt64Ty,
+//         LLVMInt64Ty}, false); Func = llvm::Function::Create(FT,
+//         GlobalValue::ExternalLinkage, "runtime_allocate", M);
+//     }
+//     return Func;
+// }
+// llvm::Function *ToIRVisitor::getOrDeclareReadValue() {
+//     Function *Func = M->getFunction("read_value");
+//     if (!Func) {
+//         // Correct llvm::FunctionType::get usage
+//         llvm::FunctionType *FT = llvm::FunctionType::get(LLVMInt32Ty,
+//         {LLVMInt32Ty}, false); Func = llvm::Function::Create(FT,
+//         GlobalValue::ExternalLinkage, "read_value", M);
+//     }
+//     return Func;
+// }
+// llvm::Function *ToIRVisitor::getOrDeclareWriteInt() {
+//     Function *Func = M->getFunction("write_int");
+//     if (!Func) {
+//         // Correct llvm::FunctionType::get usage
+//         llvm::FunctionType *FT = llvm::FunctionType::get(LLVMVoidTy,
+//         {LLVMInt32Ty}, false); Func = llvm::Function::Create(FT,
+//         GlobalValue::ExternalLinkage, "write_int", M);
+//     }
+//     return Func;
+// }
+// llvm::Function *ToIRVisitor::getOrDeclareWriteBool() {
+//     Function *Func = M->getFunction("write_bool");
+//     if (!Func) {
+//          // Correct llvm::FunctionType::get usage
+//         llvm::FunctionType *FT = llvm::FunctionType::get(LLVMVoidTy,
+//         {LLVMInt32Ty}, false); Func = llvm::Function::Create(FT,
+//         GlobalValue::ExternalLinkage, "write_bool", M);
+//     }
+//     return Func;
+// }

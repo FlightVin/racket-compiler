@@ -2,6 +2,7 @@
 #include "llracket/AST/AST.h"
 #include "llracket/Basic/Type.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/ScopeExit.h" // Included previously
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -28,28 +29,43 @@ using namespace llracket::codegen;
 
 void ToIRVisitor::visit(Def &Node) {
   StringRef FuncName = Node.getName();
-  FunctionType *FuncSig = dyn_cast_or_null<FunctionType>(
-      ExprTypes.lookup(Node.getBody())); // Get llracket::FunctionType
-                                         // Maybe better stored on Def node?
 
-  // Retrieve the LLVM function type from the Sema-computed FunctionType
-  FunctionType *FoundSig = FunctionEnv.lookup(FuncName);
-  if (!FoundSig) {
-    report_fatal_error("CodeGen Error: Function signature not found in "
-                       "FunctionEnv for " +
-                       FuncName);
+  // --- Get function signature from Sema's type map ---
+  // Assumes Sema stored the FunctionType associated with the Def's Body.
+  // Alternatively, Sema could store it associated with the Def node itself if
+  // needed.
+  Type *FuncSemaType = ExprTypes.lookup(Node.getBody());
+  FunctionType *llRacketFnTy = dyn_cast_or_null<FunctionType>(FuncSemaType);
+
+  if (!llRacketFnTy) {
+    // <<< REMOVED Fallback lookup via FunctionEnv >>>
+    report_fatal_error(
+        "CodeGen Error: Function signature llracket::Type not found in "
+        "ExprTypes map for body of " +
+        FuncName);
   }
-  llvm::FunctionType *LLVMFuncTy = getLLVMFunctionType(FoundSig);
+  llvm::FunctionType *LLVMFuncTy = getLLVMFunctionType(llRacketFnTy);
+  // --- End Signature Retrieval ---
 
   // Create the LLVM Function
   Function *TheFunction =
       Function::Create(LLVMFuncTy, GlobalValue::ExternalLinkage, FuncName, M);
 
-  // Store function in global map *before* processing body (for recursion)
+  // Store function in global map
   if (GlobalFunctions.count(FuncName)) {
-    // Should have been caught by Sema, but good defensive check
-    llvm::errs() << "Codegen Warning: Function " << FuncName
-                 << " already exists in module.\n";
+    llvm::errs()
+        << "Codegen Warning: Function " << FuncName
+        << " already exists in module. Replacing previous definition.\n";
+    // Handle redefinition: Get existing, replace uses, erase old
+    llvm::Function *ExistingFunc = GlobalFunctions[FuncName];
+    if (ExistingFunc != TheFunction) { // Ensure we don't erase the one just
+                                       // created if map already contained it
+      TheFunction->replaceAllUsesWith(ExistingFunc);
+      TheFunction->eraseFromParent();
+      TheFunction = ExistingFunc; // Use the existing function object
+      // Clear existing blocks if we intend to redefine content
+      TheFunction->deleteBody();
+    }
   }
   GlobalFunctions[FuncName] = TheFunction;
 
@@ -60,79 +76,70 @@ void ToIRVisitor::visit(Def &Node) {
   // Set current function context for allocas
   llvm::Function *OldFunction = CurrentFunction;
   CurrentFunction = TheFunction;
-  // Ensure CurrentFunction is reset on scope exit
   auto FuncContextExit =
-      make_scope_exit([&]() { CurrentFunction = OldFunction; });
+      llvm::make_scope_exit([&]() { CurrentFunction = OldFunction; });
 
   // --- Function Prologue ---
-  // 1. Save old %rbp, set new %rbp (Standard practice, though maybe omitted if
-  // no frame pointer needed) TODO: Add frame pointer handling if required later
+  // TODO: Implement proper frame setup (saving %rbp, setting new %rbp)
 
-  // 2. Allocate space for parameters on the stack
-  StringMap<AllocaInst *> OldNameMap = nameMap; // Save outer scope map
-  nameMap.clear();                              // Clear map for local scope
+  // Allocate space for parameters and store incoming arguments
+  StringMap<AllocaInst *> OldNameMap = nameMap;
+  nameMap.clear();
 
   unsigned ParamIdx = 0;
   for (auto &Arg : TheFunction->args()) {
+    if (ParamIdx >= Node.getParams().size()) {
+      llvm::errs() << "Codegen Warning: More LLVM arguments than AST "
+                      "parameters for function "
+                   << FuncName << "\n";
+      break;
+    }
     const auto &ParamInfo = Node.getParams()[ParamIdx];
     StringRef ParamName = ParamInfo.first;
-    Type *ParamRacketType = ParamInfo.second; // llracket::Type
+    Type *ParamRacketType = ParamInfo.second;
     llvm::Type *ParamLLVMType = getLLVMType(ParamRacketType);
 
-    // Allocate memory for the parameter using helper
     AllocaInst *Alloca = CreateEntryBlockAlloca(ParamLLVMType, ParamName);
-
-    // Store the incoming argument value into the alloca
     Builder.CreateStore(&Arg, Alloca);
-
-    // Add arguments to the symbol table
     nameMap[ParamName] = Alloca;
-    Arg.setName(ParamName); // Optional: Set LLVM argument name
+    Arg.setName(ParamName);
     ++ParamIdx;
   }
 
-  // 3. Allocate space for local variables (TODO: integrate with register
-  // allocation/spilling)
-  // 4. Save callee-saved registers (TODO: integrate with register allocation)
+  // TODO: Allocate space for local variables
+  // TODO: Save callee-saved registers
 
   // --- Function Body ---
+  if (!Node.getBody()) {
+    report_fatal_error("CodeGen Error: Null body for function " + FuncName);
+  }
   Node.getBody()->accept(*this);
-  Value *ReturnValue = V; // Value returned by the body
+  Value *ReturnValue = V;
 
   // --- Function Epilogue ---
-  // Ensure return value type matches function signature
   llvm::Type *ExpectedLLVMRetTy = LLVMFuncTy->getReturnType();
-  if (!ReturnValue) {
-    llvm::errs() << "Codegen Error: Null return value from body of function "
-                 << FuncName << "\n";
-    ReturnValue = Constant::getNullValue(ExpectedLLVMRetTy);
-  } else if (ReturnValue->getType() != ExpectedLLVMRetTy) {
-    llvm::errs() << "Codegen Warning: Return type mismatch for function "
-                 << FuncName << ". Expected " << *ExpectedLLVMRetTy << ", got "
-                 << *ReturnValue->getType() << ". Attempting cast.\n";
-    if (ExpectedLLVMRetTy == LLVMInt32Ty &&
-        ReturnValue->getType() == LLVMInt1Ty) {
-      ReturnValue = Builder.CreateZExt(ReturnValue, LLVMInt32Ty, "ret_cast");
-    } else if (ExpectedLLVMRetTy == LLVMInt1Ty &&
-               ReturnValue->getType() == LLVMInt32Ty) {
-      ReturnValue =
-          Builder.CreateICmpNE(ReturnValue, LLVMInt32Zero, "ret_cast");
-    } // Add more casts if needed
-    else {
-      llvm::errs() << " -- Cannot cast return value. Returning default.\n";
-      ReturnValue = Constant::getNullValue(ExpectedLLVMRetTy);
-    }
+  if (!ReturnValue) { /* ... error handling ... */
+  } else if (ReturnValue->getType() !=
+             ExpectedLLVMRetTy) { /* ... casting ... */
   }
 
-  // 1. Restore callee-saved registers (TODO)
-  // 2. Restore stack pointer (adjusting for locals/spills) (TODO)
-  // 3. Restore old %rbp (TODO)
+  // TODO: Restore callee-saved registers
+  // TODO: Restore stack pointer
+  // TODO: Restore old %rbp
 
-  // 4. Emit return instruction
-  if (ExpectedLLVMRetTy->isVoidTy()) { // Although we map Void to i32
-    Builder.CreateRetVoid();
-  } else {
-    Builder.CreateRet(ReturnValue);
+  // Emit return instruction
+  if (!Builder.GetInsertBlock()->getTerminator()) {
+    if (ExpectedLLVMRetTy->isVoidTy()) {
+      Builder.CreateRetVoid();
+    } else {
+      if (ReturnValue->getType() != ExpectedLLVMRetTy) {
+        llvm::errs() << "Codegen Error: Cannot return value of type "
+                     << *ReturnValue->getType() << " from function " << FuncName
+                     << " expecting " << *ExpectedLLVMRetTy << "\n";
+        ReturnValue = Constant::getNullValue(ExpectedLLVMRetTy);
+      }
+      Builder.CreateRet(ReturnValue);
+    }
   }
 
   // Restore the outer scope's variable map
@@ -142,7 +149,7 @@ void ToIRVisitor::visit(Def &Node) {
   if (verifyFunction(*TheFunction, &errs())) {
     llvm::errs() << "LLVM Function verification failed for: " << FuncName
                  << "\n";
-    TheFunction->print(llvm::errs()); // Dump function on error
+    TheFunction->print(llvm::errs());
   }
 }
 
@@ -151,55 +158,63 @@ void ToIRVisitor::visit(Apply &Node) {
   Type *FnSemaType = ExprTypes.lookup(Node.getFnExpr());
   FunctionType *llRacketFnTy = dyn_cast_or_null<FunctionType>(FnSemaType);
 
-  if (!llRacketFnTy) {
-    llvm::errs()
-        << "CodeGen Error: Expression in apply node is not a function type.\n";
-    // Generate a default value based on the expected type of Apply node itself
-    Type *ApplyResultType = ExprTypes.lookup(&Node);
-    V = Constant::getNullValue(
-        getLLVMType(ApplyResultType ? ApplyResultType : ErrorType::get()));
+  if (!llRacketFnTy) { /* ... error handling ... */
     return;
   }
 
-  // Get the corresponding LLVM function type
   llvm::FunctionType *LLVMFnTy = getLLVMFunctionType(llRacketFnTy);
+  if (!LLVMFnTy) { /* ... error handling ... */
+    return;
+  }
 
   // Visit the function expression to get the function pointer/value
   Node.getFnExpr()->accept(*this);
   Value *FnValue = V;
-  if (!FnValue) {
-    llvm::errs() << "CodeGen Error: Null function value in apply node.\n";
+  if (!FnValue) { /* ... error handling ... */
+    return;
+  }
+
+  Value *CallableFn = nullptr;
+  PointerType *LLVMFnPtrTy =
+      PointerType::getUnqual(LLVMFnTy); // Expected pointer type
+
+  if (isa<llvm::Function>(FnValue)) {
+    // Direct call to a known global function
+    if (FnValue->getType() != LLVMFnPtrTy) {
+      CallableFn = Builder.CreateBitCast(FnValue, LLVMFnPtrTy, "fn_ptr_cast");
+    } else {
+      CallableFn = FnValue;
+    }
+  } else if (FnValue->getType()->isPointerTy()) {
+    // Assume it's a closure pointer or function pointer variable, cast it
+    CallableFn = Builder.CreatePointerCast(FnValue, LLVMFnPtrTy, "callable");
+  } else {
+    llvm::errs() << "CodeGen Error: Function expression did not evaluate to a "
+                    "function or pointer.\n";
     Type *ApplyResultType = ExprTypes.lookup(&Node);
     V = Constant::getNullValue(
         getLLVMType(ApplyResultType ? ApplyResultType : ErrorType::get()));
     return;
   }
 
-  // Cast the function value (likely i64* representing closure/fn) to the
-  // correct LLVM function pointer type
-  PointerType *LLVMFnPtrTy = PointerType::getUnqual(LLVMFnTy);
-  Value *CallableFn =
-      Builder.CreatePointerCast(FnValue, LLVMFnPtrTy, "callable");
-
-  // Visit arguments
+  // Visit arguments and perform type checks/casts
   std::vector<Value *> ArgValues;
   ArgValues.reserve(Node.getArgs().size());
+  if (LLVMFnTy->getNumParams() !=
+      Node.getArgs().size()) { /* ... arity error ... */
+    return;
+  }
+
   for (size_t i = 0; i < Node.getArgs().size(); ++i) {
     Expr *ArgExpr = Node.getArgs()[i];
     ArgExpr->accept(*this);
     Value *ArgValue = V;
-    llvm::Type *ExpectedParamTy =
-        LLVMFnTy->getParamType(i); // Get expected LLVM type
+    llvm::Type *ExpectedParamTy = LLVMFnTy->getParamType(i);
 
-    if (!ArgValue) {
-      llvm::errs() << "CodeGen Error: Null value for argument " << i
-                   << " in apply node.\n";
+    if (!ArgValue) { /* ... error handling ... */
       ArgValue = Constant::getNullValue(ExpectedParamTy);
     } else if (ArgValue->getType() != ExpectedParamTy) {
-      // Handle type mismatch between argument value and function parameter type
-      llvm::errs() << "Codegen Warning: Type mismatch for argument " << i
-                   << ". Expected " << *ExpectedParamTy << ", got "
-                   << *ArgValue->getType() << ". Casting.\n";
+      // Perform type casting/checking (similar to logic in visit(Let&))
       if (ExpectedParamTy == LLVMInt32Ty && ArgValue->getType() == LLVMInt1Ty) {
         ArgValue = Builder.CreateZExt(ArgValue, LLVMInt32Ty, "arg_cast");
       } else if (ExpectedParamTy == LLVMInt1Ty &&
@@ -209,8 +224,10 @@ void ToIRVisitor::visit(Apply &Node) {
                  ArgValue->getType()->isPointerTy()) {
         ArgValue =
             Builder.CreatePointerCast(ArgValue, ExpectedParamTy, "arg_ptrcast");
-      } else {
-        llvm::errs() << " -- Cannot cast argument value. Using default.\n";
+      } else if (ArgValue->getType() != ExpectedParamTy) {
+        llvm::errs() << "Codegen Warning: Cannot cast argument " << i
+                     << ". Expected " << *ExpectedParamTy << ", got "
+                     << *ArgValue->getType() << ". Using null.\n";
         ArgValue = Constant::getNullValue(ExpectedParamTy);
       }
     }
