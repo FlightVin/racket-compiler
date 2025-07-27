@@ -1,61 +1,180 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/Jc7KCP7q)
-# LLVM Racket Compiler
+# LLRacket: A Racket-like Language Compiler with LLVM
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Project Details
+LLRacket is a statically-typed, Racket-like programming language compiler that targets LLVM Intermediate Representation (IR). The compiler is implemented in C++ and supports a variety of language features including functions, conditionals, loops, and basic data types.
 
-For each stage of your project, you are expected to implement language features incrementally. It will ultimately be up to you how to approach this. You are provided with an end-to-end compiler for the Lint language (*EoC Figure 1.1*) as a sample project. You can either use this template as-is or adapt it to suit your needs as the project progresses. Certain files are expected to be updated throughout the course, and these will be highlighted below.
+## Who made this?
 
-The instructions for each stage will be posted on Moodle. To get started, you are expected to implement the Lvar language as described in *EoC Figure 2.1*.
+Aryan and Vineeth, Vineeth and Aryan (ofc, the compilers TA and profs guided us - couldn't - wouldn't - have done it without them)
 
----
+## Documentation
 
-## Project Template
+For detailed information about the compiler's implementation:
 
-You are provided with a Racket frontend for the Lint language. The project follows the directory structure described in Chapter 3 of the textbook and implements a simple visitor pattern for both semantic analysis and code generation, as outlined in Chapter 2 of the textbook. Additionally, basic runtime and testing functionality are included, which you can extend as needed.
+- [Type System](docs/types.md) - Overview of the static type system and type checking
+- [Control Flow](docs/control-flow.md) - Architecture and module interactions
 
-To begin, clone this repository and implement your features on top of the provided template.
+## Features
 
----
+- **Static Type System**: Supports Integer, Boolean, and Void types with type inference
+- **Control Flow**: If-else conditionals, while loops, and begin blocks
+- **Functions**: First-class functions with recursion and mutual recursion support
+- **Variables**: Mutable variables with lexical scoping
+- **Primitive Operations**: Arithmetic, comparison, and logical operations
+- **I/O Operations**: Basic input/output functions
+- **Vectors**: Fixed-size array-like data structures
+- **Type Safety**: Comprehensive compile-time type checking
 
-## Project Instructions
+## Project Structure
 
-### LLVM Installation
+```
+.
+├── include/llracket/     # Header files
+│   ├── AST/             # Abstract Syntax Tree definitions
+│   ├── Basic/           # Basic types and utilities
+│   ├── CodeGen/         # LLVM IR code generation
+│   ├── Lexer/          # Lexical analysis
+│   ├── Parser/         # Syntax analysis
+│   └── Sema/           # Semantic analysis
+├── lib/                # Implementation files
+├── tests/              # Test cases
+│   ├── bool/           # Boolean operation tests
+│   ├── fun/            # Function tests
+│   ├── int/            # Integer operation tests
+│   └── var/            # Variable tests
+└── tools/              # Compiler tools and runtime
+    └── runtime/        # Runtime support library
+```
 
-To run this project, you will need to have LLVM 20.x and Clang 20.x installed. You can either download precompiled binaries/packages for your distribution or build LLVM from source (recommended). Installation steps were covered in a previous tutorial. If you encounter issues, feel free to contact the TA for assistance.
+## Getting Started
 
-### Running the Project with CMake
+### Prerequisites
 
-Before running the project, ensure you have installed CMake, Ninja, and Python for your operating system. Follow these steps to build the project:
+- LLVM 20.x
+- Clang 20.x
+- CMake 3.20 or later
+- Ninja build system
+- Python 3.x (for running tests)
 
-1. **Configure the Project**: Use the Ninja build system and specify your compiler paths explicitly.
-   ```sh
-   cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/path/to/clang -DCMAKE_CXX_COMPILER=/path/to/clang++ -S . -B build
+### Building from Source
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/FlightVin/racket-compiler.git
+   cd racket-compiler
    ```
-   You may need to create a `build` directory in the root of the repository before running this command.
 
-2. **Build the Project**:
-   ```sh
+2. Configure the build:
+   ```bash
+   cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+         -DCMAKE_C_COMPILER=clang \
+         -DCMAKE_CXX_COMPILER=clang++ \
+         -S . -B build
+   ```
+
+3. Build the project:
+   ```bash
    cmake --build ./build
    ```
-   This step compiles the project and places the binary in `./build/bin`.
 
-### Testing
+The compiled `llracket` binary will be available at `build/bin/llracket`.
 
-Once the project is built and you have a compiled `llracket` binary, you can test your code against the tests in the `tests` directory by running the following command in the `build` directory:
-```sh
+## Usage
+
+### Running the Compiler
+
+To compile a Racket source file:
+
+```bash
+./build/bin/llracket input.rkt -o output.ll
+```
+
+### Running Tests
+
+Run the test suite using the provided script:
+
+```bash
+./test-single.sh tests/fun/recursion_fac.rkt
+```
+
+Or run all tests:
+
+```bash
+cd build
 ninja check
 ```
 
-You can write your own test scripts in `tests/my_test_script.py` and define custom testing methods. Note that the `tests/test_script.py` file is likely to be updated during the course, so avoid making irreversible changes to it.
+## Language Reference
 
-### Incremental Updates
+### Data Types
 
-Before each assignment (or when instructed by the instructor/TA), you may need to update the code by pulling changes from GitHub. Run the following command from within the project folder:
-```sh
-git pull
+- **Integer**: 32-bit signed integers
+- **Boolean**: `#t` (true) or `#f` (false)
+- **Void**: Represents the absence of a value
+- **Vector**: Fixed-size arrays (e.g., `(vector 1 2 3)`)
+
+### Control Structures
+
+#### If Expression
+```racket
+(if condition
+    then-expr
+    else-expr)
 ```
 
-The files most likely to change are `./tests/test_script.py` and the `./tools/runtime` directory. You can freely modify the remaining files with minimal risk of merge conflicts.
+#### While Loop
+```racket
+(while condition
+  body-expr)
+```
 
+#### Begin Block
+```racket
+(begin
+  expr1
+  expr2
+  ...
+  result-expr)
+```
+
+### Functions
+
+#### Function Definition
+```racket
+(define (function-name [param1 : Type1] [param2 : Type2] ...) : ReturnType
+  body-expr)
+```
+
+#### Function Application
+```racket
+(function-name arg1 arg2 ...)
+```
+
+### Variables
+
+#### Let Binding
+```racket
+(let ([var1 expr1]
+      [var2 expr2])
+  body-expr)
+```
+
+#### Variable Assignment
+```racket
+(set! var-name new-value)
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Based on the LLRacket compiler project
+- Uses LLVM for code generation
+- Inspired by Racket and Scheme programming languages

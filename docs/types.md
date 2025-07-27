@@ -1,4 +1,8 @@
-**1. Overview**
+# Type System Documentation
+
+*LLM generated summaries of the LLRacket type system implementation.*
+
+## 1. Overview
 
 The LLRacket compiler employs a static type checking system implemented primarily within the Semantic Analysis (`Sema`) phase. This phase runs after parsing (which generates the Abstract Syntax Tree - AST) and before code generation (`CodeGen`). Its main goals are:
 
