@@ -164,17 +164,3 @@ ninja check
 ```racket
 (set! var-name new-value)
 ```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Based on the LLRacket compiler project
-- Uses LLVM for code generation
-- Inspired by Racket and Scheme programming languages
